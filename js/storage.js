@@ -14,6 +14,7 @@ const GITHUB_FILE = "data/store.json";
 const LOCAL_TOKEN_KEY = "casamorf-gh-token";
 const LOCAL_REPO_KEY = "casamorf-gh-repo";
 const LOCAL_PIN_KEY = "casamorf-pin-session";
+const LOCAL_PW_KEY = "casamorf-pw";
 
 // ─── GitHub DB Layer (reads/writes raw JSON to repo) ───
 
@@ -124,6 +125,7 @@ const CasaStore = (() => {
     function clearCredentials() {
         localStorage.removeItem(LOCAL_TOKEN_KEY);
         localStorage.removeItem(LOCAL_REPO_KEY);
+        localStorage.removeItem(LOCAL_PW_KEY);
         sessionStorage.removeItem(LOCAL_PIN_KEY);
     }
 
@@ -177,6 +179,8 @@ const CasaStore = (() => {
             _decrypted = { household: null, members: [], items: [], tasks: [] };
             console.log("unlock: fresh start");
         }
+        // Remember password locally so user doesn't have to re-enter
+        localStorage.setItem(LOCAL_PW_KEY, pin);
         sessionStorage.setItem(LOCAL_PIN_KEY, "1");
         return true;
     }
@@ -186,9 +190,14 @@ const CasaStore = (() => {
         _aesKey = await CasaCrypto.deriveKey(pin);
         _raw.pinHash = await CasaCrypto.hashPin(pin);
         if (!_decrypted) _decrypted = { household: null, members: [], items: [], tasks: [] };
+        localStorage.setItem(LOCAL_PW_KEY, pin);
         sessionStorage.setItem(LOCAL_PIN_KEY, "1");
         const ok = await _save();
         console.log("setPin _save result:", ok);
+    }
+
+    function getSavedPassword() {
+        return localStorage.getItem(LOCAL_PW_KEY);
     }
 
     function isSessionAuth() { return sessionStorage.getItem(LOCAL_PIN_KEY) === "1"; }
@@ -259,7 +268,7 @@ const CasaStore = (() => {
     return {
         hasCredentials, getCredentials, saveCredentials, clearCredentials,
         connect, isConnected, hasPinSet, verifyPin, unlock, setPin,
-        isSessionAuth,
+        isSessionAuth, getSavedPassword,
         save, load, saveAll, refresh, exportAll,
     };
 })();

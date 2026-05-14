@@ -1,40 +1,43 @@
-// CasaMorf Service Worker — Offline-first caching
-// IMPORTANT: Never cache data/store.json or API calls
-const CACHE_NAME = 'casamorf-v4';
-const ASSETS = [
-    './',
-    './index.html',
-    './css/app.css',
-    './js/crypto.js',
-    './js/storage.js',
-    './js/app.js',
-    './manifest.json',
-    './icons/favicon.svg'
-];
+// CasaMorf Service Worker — Network-first for app files, skip API calls
+// App files are always fetched fresh from network (falls back to cache if offline)
+// This ensures updates are picked up immediately without manual cache clearing.
 
-self.addEventListener('install', e => {
-    e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS)));
-    self.skipWaiting();
+const CACHE_NAME = 'casamorf-v5';
+
+self.addEventListener('install', () => {
+    self.skipWaiting(); // Activate immediately
 });
 
 self.addEventListener('activate', e => {
+    // Delete ALL old caches
     e.waitUntil(
         caches.keys().then(keys =>
             Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
         )
     );
-    self.clients.claim();
+    self.clients.claim(); // Take control immediately
 });
 
 self.addEventListener('fetch', e => {
     const url = new URL(e.request.url);
 
-    // NEVER cache GitHub API calls or store.json
+    // NEVER intercept GitHub API calls or store.json
     if (url.hostname === 'api.github.com' || url.pathname.includes('store.json')) {
-        return; // Let the browser handle it normally (no cache)
+        return;
     }
 
+    // NEVER intercept non-GET requests
+    if (e.request.method !== 'GET') return;
+
+    // Network-first: try network, fall back to cache (for offline support)
     e.respondWith(
-        caches.match(e.request).then(r => r || fetch(e.request))
+        fetch(e.request)
+            .then(response => {
+                // Cache the fresh response for offline use
+                const clone = response.clone();
+                caches.open(CACHE_NAME).then(cache => cache.put(e.request, clone));
+                return response;
+            })
+            .catch(() => caches.match(e.request)) // Offline fallback
     );
 });

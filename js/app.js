@@ -1035,13 +1035,27 @@ const App = (() => {
     // INIT
     // ========================================================================
     async function init() {
-        // Try to reconnect with saved credentials
         if (CasaStore.hasCredentials()) {
             const { token, repo } = CasaStore.getCredentials();
             try {
                 await CasaStore.connect(token, repo);
-                // Data is still encrypted — don't loadAll() yet.
-                // After PIN unlock, loadAll() will be called.
+
+                // Auto-unlock with saved password (no prompt needed)
+                const savedPw = CasaStore.getSavedPassword();
+                if (savedPw && CasaStore.hasPinSet()) {
+                    const ok = await CasaStore.verifyPin(savedPw);
+                    if (ok) {
+                        const unlocked = await CasaStore.unlock(savedPw);
+                        if (unlocked) {
+                            await loadAll();
+                            console.log("Auto-unlock OK");
+                        }
+                    }
+                } else if (savedPw && !CasaStore.hasPinSet()) {
+                    // Has saved pw but no pin set yet — set it now
+                    await CasaStore.setPin(savedPw);
+                    await loadAll();
+                }
             } catch (e) {
                 console.error("Auto-connect failed:", e);
             }
