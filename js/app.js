@@ -108,7 +108,7 @@ const App = (() => {
     async function saveAll() {
         state.syncing = true;
         updateSyncIndicator();
-        await CasaStore.saveAll({
+        const ok = await CasaStore.saveAll({
             household: state.household,
             members: state.members,
             items: state.items,
@@ -116,6 +116,10 @@ const App = (() => {
         });
         state.syncing = false;
         updateSyncIndicator();
+        if (!ok) {
+            toast('⚠️ Sync fehlgeschlagen!');
+            console.error('saveAll failed — data not written to GitHub');
+        }
     }
 
     function updateSyncIndicator() {

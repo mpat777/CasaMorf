@@ -50,7 +50,7 @@ class GitHubDB {
             };
             if (this.sha) body.sha = this.sha;
 
-            const res = await fetch(this.baseUrl, {
+            let res = await fetch(this.baseUrl, {
                 method: "PUT",
                 headers: {
                     Authorization: `Bearer ${this.token}`,
@@ -60,10 +60,12 @@ class GitHubDB {
                 body: JSON.stringify(body),
             });
 
+            // SHA conflict or file already exists — fetch current SHA and retry
             if (res.status === 409 || res.status === 422) {
+                console.warn("SHA conflict, re-reading...");
                 await this.read();
                 body.sha = this.sha;
-                const retry = await fetch(this.baseUrl, {
+                res = await fetch(this.baseUrl, {
                     method: "PUT",
                     headers: {
                         Authorization: `Bearer ${this.token}`,
@@ -72,13 +74,17 @@ class GitHubDB {
                     },
                     body: JSON.stringify(body),
                 });
-                if (!retry.ok) throw new Error(`Retry failed: ${retry.status}`);
-                this.sha = (await retry.json()).content.sha;
-                return true;
             }
 
-            if (!res.ok) throw new Error(`GitHub API ${res.status}`);
-            this.sha = (await res.json()).content.sha;
+            if (!res.ok) {
+                const errBody = await res.text();
+                console.error(`GitHub write failed: ${res.status}`, errBody);
+                return false;
+            }
+
+            const result = await res.json();
+            this.sha = result.content.sha;
+            console.log("GitHub write OK, new SHA:", this.sha);
             return true;
         } catch (e) {
             console.error("DB write error:", e);
@@ -121,8 +127,13 @@ const CasaStore = (() => {
     async function connect(token, repo) {
         _db = new GitHubDB(token, repo);
         _raw = await _db.read();
-        // First time: no file exists yet
-        if (!_raw) _raw = { pinHash: null, data: null };
+        if (!_raw) {
+            // File doesn't exist yet on GitHub
+            _raw = { pinHash: null, data: null };
+        } else if (!_raw.pinHash && !_raw.data) {
+            // Placeholder {} file exists — treat as empty
+            _raw = { pinHash: null, data: null };
+        }
         return true;
     }
 
@@ -180,14 +191,17 @@ const CasaStore = (() => {
     }
 
     async function saveAll(obj) {
-        if (!_decrypted) return;
+        if (!_decrypted) return false;
         Object.assign(_decrypted, obj);
-        await _save();
+        return await _save();
     }
 
     // Encrypt and write to GitHub
     async function _save() {
-        if (!_db || !_aesKey || !_decrypted) return false;
+        if (!_db || !_aesKey || !_decrypted) {
+            console.error("_save aborted: db=", !!_db, "key=", !!_aesKey, "data=", !!_decrypted);
+            return false;
+        }
         const encrypted = await CasaCrypto.encrypt(JSON.stringify(_decrypted), _aesKey);
         _raw.data = encrypted;
         return await _db.write(_raw);
