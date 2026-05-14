@@ -191,20 +191,32 @@ const CasaStore = (() => {
     }
 
     async function saveAll(obj) {
-        if (!_decrypted) return false;
+        console.log("CasaStore.saveAll called, keys:", Object.keys(obj || {}));
+        if (!_decrypted) { console.error("CasaStore.saveAll: _decrypted is null!"); return false; }
         Object.assign(_decrypted, obj);
         return await _save();
     }
 
     // Encrypt and write to GitHub
     async function _save() {
-        if (!_db || !_aesKey || !_decrypted) {
-            console.error("_save aborted: db=", !!_db, "key=", !!_aesKey, "data=", !!_decrypted);
+        console.log("_save called:", { db: !!_db, aesKey: !!_aesKey, decrypted: !!_decrypted });
+        if (!_db) { console.error("_save aborted: no db connection"); return false; }
+        if (!_aesKey) { console.error("_save aborted: no AES key (not unlocked?)"); return false; }
+        if (!_decrypted) { console.error("_save aborted: no decrypted data"); return false; }
+        try {
+            const json = JSON.stringify(_decrypted);
+            console.log("_save encrypting", json.length, "chars");
+            const encrypted = await CasaCrypto.encrypt(json, _aesKey);
+            console.log("_save encrypted, blob length:", encrypted.length);
+            _raw.data = encrypted;
+            console.log("_save writing to GitHub, pinHash:", _raw.pinHash ? "set" : "null");
+            const result = await _db.write(_raw);
+            console.log("_save write result:", result);
+            return result;
+        } catch (e) {
+            console.error("_save error:", e);
             return false;
         }
-        const encrypted = await CasaCrypto.encrypt(JSON.stringify(_decrypted), _aesKey);
-        _raw.data = encrypted;
-        return await _db.write(_raw);
     }
 
     // Pull latest from GitHub and re-decrypt
