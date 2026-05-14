@@ -1,5 +1,6 @@
 // CasaMorf Service Worker — Offline-first caching
-const CACHE_NAME = 'casamorf-v3';
+// IMPORTANT: Never cache data/store.json or API calls
+const CACHE_NAME = 'casamorf-v4';
 const ASSETS = [
     './',
     './index.html',
@@ -26,6 +27,13 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
+    const url = new URL(e.request.url);
+
+    // NEVER cache GitHub API calls or store.json
+    if (url.hostname === 'api.github.com' || url.pathname.includes('store.json')) {
+        return; // Let the browser handle it normally (no cache)
+    }
+
     e.respondWith(
         caches.match(e.request).then(r => r || fetch(e.request))
     );
