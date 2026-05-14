@@ -16,6 +16,7 @@ const App = (() => {
         tasks: [],
         tab: 'dashboard',
         modal: null,
+        editMemberId: null,
         loading: false,
         error: null,
         syncing: false,
@@ -41,7 +42,16 @@ const App = (() => {
         { id: 'once', label: 'Einmalig', short: '1x' },
     ];
 
-    const AVATARS = ['🧑‍💻', '👩‍🍳', '🧑‍🎨', '👨‍🔧', '👩‍💼', '🧑‍🏫', '🦊', '🐱', '🐻', '🦉'];
+    const AVATARS = [
+        // People
+        '🧑‍💻', '👩‍🍳', '🧑‍🎨', '👨‍🔧', '👩‍💼', '🧑‍🏫', '👨‍🌾', '🧑‍🚀',
+        // Sports & Outdoor
+        '🪂', '🚴', '🏔️', '⛷️', '🏄', '🧗', '🚵', '🏃',
+        // Animals
+        '🦊', '🐱', '🐻', '🦉', '🐶', '🦁', '🐺', '🦅',
+        // Fun
+        '👾', '🤖', '🎮', '🌟', '🔥', '💎', '🍀', '🎯',
+    ];
 
     // ========================================================================
     // HELPERS
@@ -181,6 +191,7 @@ const App = (() => {
 
         if (state.modal === 'addItem') app.appendChild(renderAddItemModal());
         if (state.modal === 'addTask') app.appendChild(renderAddTaskModal());
+        if (state.modal === 'editMember') app.appendChild(renderEditMemberModal());
     }
 
     // ========================================================================
@@ -735,8 +746,19 @@ const App = (() => {
         state.members.forEach(m => {
             const row = el('div', { class: 'row', style: { padding: '12px' } });
             row.appendChild(el('span', { style: { fontSize: '26px' } }, m.avatar));
-            row.appendChild(el('span', { style: { fontSize: '14px', fontWeight: '500', color: '#E4E7ED', flex: '1' } }, m.name));
-            if (state.currentUser?.id === m.id) row.appendChild(el('span', { style: { fontSize: '9px', color: '#5AE4A8', background: 'rgba(90,228,168,0.1)', padding: '1px 6px', borderRadius: '6px', fontWeight: '700' } }, 'YOU'));
+            const info = el('div', { class: 'flex-1' });
+            const nameRow = el('div', { class: 'flex items-center', style: { gap: '6px' } });
+            nameRow.appendChild(el('span', { style: { fontSize: '14px', fontWeight: '500', color: '#E4E7ED' } }, m.name));
+            if (state.currentUser?.id === m.id) nameRow.appendChild(el('span', { style: { fontSize: '9px', color: '#5AE4A8', background: 'rgba(90,228,168,0.1)', padding: '1px 6px', borderRadius: '6px', fontWeight: '700' } }, 'YOU'));
+            info.appendChild(nameRow);
+            row.appendChild(info);
+            // Edit button
+            const editBtn = el('button', {
+                class: 'btn-icon',
+                onClick: () => { state.modal = 'editMember'; state.editMemberId = m.id; render(); }
+            });
+            editBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>';
+            row.appendChild(editBtn);
             sec.appendChild(row);
         });
         // Add member button
@@ -902,6 +924,108 @@ const App = (() => {
 
         nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') submitBtn.click(); });
         sheet.appendChild(submitBtn);
+        overlay.appendChild(sheet);
+        setTimeout(() => nameInput.focus(), 150);
+        return overlay;
+    }
+
+    // ========================================================================
+    // EDIT MEMBER MODAL
+    // ========================================================================
+    function renderEditMemberModal() {
+        const member = state.members.find(m => m.id === state.editMemberId);
+        if (!member) { state.modal = null; return el('div'); }
+
+        const overlay = el('div', { class: 'modal-overlay', onClick: () => { state.modal = null; render(); } });
+        const sheet = el('div', { class: 'modal-sheet', onClick: e => e.stopPropagation() });
+        sheet.appendChild(el('div', { class: 'modal-handle' }));
+
+        const hdr = el('div', { class: 'flex items-center justify-between', style: { marginBottom: '16px' } });
+        hdr.appendChild(el('h3', { style: { color: '#fff' } }, 'Mitglied bearbeiten'));
+        const closeBtn = el('button', { class: 'btn-icon', onClick: () => { state.modal = null; render(); } }); closeBtn.innerHTML = icons.x;
+        hdr.appendChild(closeBtn);
+        sheet.appendChild(hdr);
+
+        let selectedAvatar = member.avatar;
+
+        // Avatar picker
+        sheet.appendChild(el('label', { class: 'form-label' }, 'Avatar'));
+        const avatarRow = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' } });
+        AVATARS.forEach(a => {
+            const abtn = el('button', {
+                style: {
+                    width: '42px', height: '42px', borderRadius: '12px', fontSize: '20px',
+                    border: `2px solid ${a === selectedAvatar ? '#5AE4A8' : '#262D3D'}`,
+                    background: a === selectedAvatar ? 'rgba(90,228,168,0.12)' : '#141820',
+                    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                },
+                onClick: () => {
+                    selectedAvatar = a;
+                    avatarRow.querySelectorAll('button').forEach(b => { b.style.border = '2px solid #262D3D'; b.style.background = '#141820'; });
+                    abtn.style.border = '2px solid #5AE4A8'; abtn.style.background = 'rgba(90,228,168,0.12)';
+                }
+            }, a);
+            avatarRow.appendChild(abtn);
+        });
+        sheet.appendChild(avatarRow);
+
+        // Name
+        sheet.appendChild(el('label', { class: 'form-label' }, 'Name'));
+        const nameInput = el('input', { class: 'form-input', value: member.name });
+        sheet.appendChild(nameInput);
+
+        // Save button
+        const saveBtn = el('button', {
+            class: 'btn-primary w-full',
+            onClick: async () => {
+                const name = nameInput.value.trim();
+                if (!name) return;
+                const oldName = member.name;
+                member.name = name;
+                member.avatar = selectedAvatar;
+                // Update currentUser if editing self
+                if (state.currentUser?.id === member.id) {
+                    state.currentUser = member;
+                    localStorage.setItem('casamorf-current-user', JSON.stringify(member));
+                }
+                // Update name references in tasks
+                state.tasks.forEach(t => {
+                    if (t.assignedTo === oldName) t.assignedTo = name;
+                    if (t.createdBy === oldName) t.createdBy = name;
+                    if (t.completedBy === oldName) t.completedBy = name;
+                });
+                state.items.forEach(i => {
+                    if (i.addedBy === oldName) i.addedBy = name;
+                    if (i.checkedBy === oldName) i.checkedBy = name;
+                });
+                await saveAll();
+                state.modal = null;
+                toast(`${name} aktualisiert`);
+                render();
+            }
+        }, icon('check'), ' Speichern');
+        sheet.appendChild(saveBtn);
+
+        // Delete button (only if not the last member)
+        if (state.members.length > 1) {
+            sheet.appendChild(el('button', {
+                class: 'btn-primary w-full',
+                style: { marginTop: '10px', background: '#FF6B8A' },
+                onClick: async () => {
+                    if (!confirm(`"${member.name}" wirklich entfernen?`)) return;
+                    state.members = state.members.filter(m => m.id !== member.id);
+                    if (state.currentUser?.id === member.id) {
+                        state.currentUser = state.members[0];
+                        localStorage.setItem('casamorf-current-user', JSON.stringify(state.currentUser));
+                    }
+                    await saveAll();
+                    state.modal = null;
+                    toast('Mitglied entfernt');
+                    render();
+                }
+            }, icon('trash'), ' Entfernen'));
+        }
+
         overlay.appendChild(sheet);
         setTimeout(() => nameInput.focus(), 150);
         return overlay;
