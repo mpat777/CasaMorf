@@ -31,11 +31,16 @@ class GitHubDB {
                 headers: { Authorization: `Bearer ${this.token}`, Accept: "application/vnd.github.v3+json" },
                 cache: "no-store",
             });
-            if (res.status === 404) return null;
+            if (res.status === 404) { console.log("DB read: file not found (404)"); return null; }
             if (!res.ok) throw new Error(`GitHub API ${res.status}`);
             const json = await res.json();
             this.sha = json.sha;
-            return JSON.parse(decodeURIComponent(escape(atob(json.content))));
+            console.log("DB read OK, SHA:", this.sha, "size:", json.size);
+            // GitHub returns base64 with newlines — strip them
+            const clean = json.content.replace(/\n/g, '').replace(/\r/g, '');
+            const decoded = decodeURIComponent(escape(atob(clean)));
+            console.log("DB decoded:", decoded.substring(0, 100));
+            return JSON.parse(decoded);
         } catch (e) {
             console.error("DB read error:", e);
             return null;
@@ -125,54 +130,65 @@ const CasaStore = (() => {
     // --- Connect to GitHub and read raw store ---
 
     async function connect(token, repo) {
+        console.log("CasaStore.connect:", repo);
         _db = new GitHubDB(token, repo);
         _raw = await _db.read();
         if (!_raw) {
-            // File doesn't exist yet on GitHub
+            console.log("connect: no file on GitHub, starting fresh");
             _raw = { pinHash: null, data: null };
         } else if (!_raw.pinHash && !_raw.data) {
-            // Placeholder {} file exists — treat as empty
+            console.log("connect: empty placeholder, SHA:", _db.sha);
             _raw = { pinHash: null, data: null };
+        } else {
+            console.log("connect: existing data found, pinHash:", !!_raw.pinHash, "data:", !!_raw.data);
         }
         return true;
     }
 
     function isConnected() { return _db !== null; }
-    function hasPinSet() { return !!(_raw && _raw.pinHash); }
+    function hasPinSet() { 
+        const r = !!(_raw && _raw.pinHash);
+        console.log("hasPinSet:", r);
+        return r;
+    }
 
     // --- PIN verification and unlock ---
 
     async function verifyPin(pin) {
         const hash = await CasaCrypto.hashPin(pin);
+        console.log("verifyPin:", hash === _raw.pinHash);
         return hash === _raw.pinHash;
     }
 
     async function unlock(pin) {
+        console.log("unlock called, has data:", !!_raw.data);
         _aesKey = await CasaCrypto.deriveKey(pin);
-        // Try to decrypt existing data
         if (_raw.data) {
             try {
                 const json = await CasaCrypto.decrypt(_raw.data, _aesKey);
                 _decrypted = JSON.parse(json);
+                console.log("unlock OK, members:", _decrypted.members?.length);
             } catch (e) {
-                console.error("Decrypt failed — wrong PIN?", e);
+                console.error("Decrypt failed:", e);
                 _aesKey = null;
                 return false;
             }
         } else {
-            // Fresh start
             _decrypted = { household: null, members: [], items: [], tasks: [] };
+            console.log("unlock: fresh start");
         }
         sessionStorage.setItem(LOCAL_PIN_KEY, "1");
         return true;
     }
 
     async function setPin(pin) {
+        console.log("setPin called");
         _aesKey = await CasaCrypto.deriveKey(pin);
         _raw.pinHash = await CasaCrypto.hashPin(pin);
         if (!_decrypted) _decrypted = { household: null, members: [], items: [], tasks: [] };
         sessionStorage.setItem(LOCAL_PIN_KEY, "1");
-        await _save();
+        const ok = await _save();
+        console.log("setPin _save result:", ok);
     }
 
     function isSessionAuth() { return sessionStorage.getItem(LOCAL_PIN_KEY) === "1"; }
