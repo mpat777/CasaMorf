@@ -1,10 +1,9 @@
 // CasaMorf Service Worker — Offline-first caching
-const CACHE_NAME = 'casamorf-v1';
+const CACHE_NAME = 'casamorf-v2';
 const ASSETS = [
     './',
     './index.html',
     './css/app.css',
-    './js/crypto.js',
     './js/storage.js',
     './js/app.js',
     './manifest.json',

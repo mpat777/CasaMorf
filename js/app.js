@@ -1,7 +1,7 @@
 // ============================================================================
-// CasaMorf — Main Application (Vanilla JS, no framework)
-// Same architecture as evChargeTracker: pure HTML/CSS/JS, GitHub Pages
-// All data encrypted with AES-256-GCM via passphrase
+// CasaMorf — Main Application
+// GitHub API shared storage (same as evChargeTracker)
+// PIN protected, multi-device sync via data/store.json in repo
 // ============================================================================
 
 const App = (() => {
@@ -9,12 +9,16 @@ const App = (() => {
     // STATE
     // ========================================================================
     let state = {
-        user: null,
+        currentUser: null, // { name, avatar }
         household: null,
+        members: [],
         items: [],
         tasks: [],
         tab: 'dashboard',
         modal: null,
+        loading: false,
+        error: null,
+        syncing: false,
     };
 
     const CATEGORIES = [
@@ -32,7 +36,7 @@ const App = (() => {
     const FREQUENCIES = [
         { id: 'daily', label: 'Täglich', short: '1d' },
         { id: 'weekly', label: 'Wöchentlich', short: '1w' },
-        { id: 'biweekly', label: 'Alle 2 Wochen', short: '2w' },
+        { id: 'biweekly', label: 'Alle 2 Wo', short: '2w' },
         { id: 'monthly', label: 'Monatlich', short: '1m' },
         { id: 'once', label: 'Einmalig', short: '1x' },
     ];
@@ -44,7 +48,6 @@ const App = (() => {
     // ========================================================================
     const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     const $ = (sel) => document.querySelector(sel);
-    const $$ = (sel) => document.querySelectorAll(sel);
     const el = (tag, attrs = {}, ...children) => {
         const e = document.createElement(tag);
         for (const [k, v] of Object.entries(attrs)) {
@@ -63,13 +66,13 @@ const App = (() => {
     function fmtDate(d) {
         const ms = Date.now() - new Date(d).getTime();
         const h = ms / 3.6e6;
-        if (h < 1) return 'just now';
-        if (h < 24) return `${Math.floor(h)}h ago`;
-        if (h < 48) return 'yesterday';
+        if (h < 1) return 'gerade eben';
+        if (h < 24) return `vor ${Math.floor(h)}h`;
+        if (h < 48) return 'gestern';
         return new Date(d).toLocaleDateString('de-CH', { day: 'numeric', month: 'short' });
     }
 
-    // Lucide-style SVG icons (inline, no dependency)
+    // Inline SVG icons
     const icons = {
         home: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
         cart: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg>',
@@ -84,10 +87,9 @@ const App = (() => {
         flame: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>',
         alert: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>',
         sparkles: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg>',
-        logout: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>',
-        lock: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
-        userplus: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/></svg>',
         download: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>',
+        refresh: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>',
+        settings: '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>',
     };
 
     function icon(name, size) {
@@ -101,20 +103,31 @@ const App = (() => {
     }
 
     // ========================================================================
-    // SAVE / LOAD
+    // SAVE / LOAD (GitHub API)
     // ========================================================================
     async function saveAll() {
-        await CasaStore.save('user', state.user);
-        await CasaStore.save('household', state.household);
-        await CasaStore.save('items', state.items);
-        await CasaStore.save('tasks', state.tasks);
+        state.syncing = true;
+        updateSyncIndicator();
+        await CasaStore.saveAll({
+            household: state.household,
+            members: state.members,
+            items: state.items,
+            tasks: state.tasks,
+        });
+        state.syncing = false;
+        updateSyncIndicator();
     }
 
     async function loadAll() {
-        state.user = await CasaStore.load('user', null);
         state.household = await CasaStore.load('household', null);
+        state.members = await CasaStore.load('members', []);
         state.items = await CasaStore.load('items', []);
         state.tasks = await CasaStore.load('tasks', []);
+    }
+
+    function updateSyncIndicator() {
+        const dot = $('#sync-dot');
+        if (dot) dot.style.background = state.syncing ? '#FFB347' : '#5AE4A8';
     }
 
     // ========================================================================
@@ -123,7 +136,7 @@ const App = (() => {
     function toast(msg) {
         const existing = $('.toast');
         if (existing) existing.remove();
-        const t = el('div', { class: 'toast' }, icon('check'), msg);
+        const t = el('div', { class: 'toast' }, msg);
         document.body.appendChild(t);
         setTimeout(() => t.remove(), 2200);
     }
@@ -135,13 +148,29 @@ const App = (() => {
         const app = $('#app');
         app.innerHTML = '';
 
-        if (!CasaStore.isUnlocked()) {
-            renderLockScreen(app);
+        // Step 1: GitHub credentials
+        if (!CasaStore.hasCredentials() || !CasaStore.isConnected()) {
+            if (!CasaStore.hasCredentials()) {
+                renderSetup(app);
+                return;
+            }
+        }
+
+        // Step 2: PIN check
+        if (CasaStore.hasPinSet() && !CasaStore.isSessionAuth()) {
+            renderPinScreen(app, false);
             return;
         }
 
-        if (!state.user) {
-            renderAuth(app);
+        // Step 3: First time — set PIN
+        if (!CasaStore.hasPinSet()) {
+            renderPinScreen(app, true);
+            return;
+        }
+
+        // Step 4: Pick user (if not selected this session)
+        if (!state.currentUser) {
+            renderUserPicker(app);
             return;
         }
 
@@ -155,75 +184,173 @@ const App = (() => {
         app.appendChild(main);
         app.appendChild(renderNav());
 
-        // Modal
         if (state.modal === 'addItem') app.appendChild(renderAddItemModal());
         if (state.modal === 'addTask') app.appendChild(renderAddTaskModal());
     }
 
     // ========================================================================
-    // LOCK SCREEN (Passphrase)
+    // SETUP SCREEN (GitHub Token + Repo)
     // ========================================================================
-    function renderLockScreen(container) {
-        const isNew = !CasaStore.hasData();
+    function renderSetup(container) {
         const page = el('div', { class: 'lock-screen' });
-
         page.appendChild(el('div', { class: 'lock-logo' }, '🏠'));
-        page.appendChild(el('h1', { style: { color: '#fff', marginTop: '14px', letterSpacing: '-1px' } }, 'CasaMorf'));
-        page.appendChild(el('p', { style: { color: '#8B93A7', fontSize: '14px', marginTop: '4px' } },
-            isNew ? 'Choose a passphrase to encrypt your data.' : 'Enter your passphrase to unlock.'));
+        page.appendChild(el('h1', { style: { color: '#fff', marginTop: '14px' } }, 'CasaMorf'));
+        page.appendChild(el('p', { style: { color: '#8B93A7', fontSize: '13px', marginTop: '4px', textAlign: 'center' } },
+            'Connect your GitHub repo to sync data across all devices.'));
 
-        const form = el('div', { style: { width: '100%', maxWidth: '340px', marginTop: '28px' } });
+        const form = el('div', { style: { width: '100%', maxWidth: '340px', marginTop: '24px' } });
 
-        const input = el('input', {
-            class: 'form-input',
-            type: 'password',
-            placeholder: isNew ? 'New passphrase...' : 'Passphrase...',
-            style: { textAlign: 'center' },
-        });
+        form.appendChild(el('label', { class: 'form-label' }, 'GitHub Personal Access Token'));
+        const tokenInput = el('input', { class: 'form-input', type: 'password', placeholder: 'ghp_xxxxxxxxxxxx' });
+        form.appendChild(tokenInput);
 
-        const errMsg = el('p', { style: { color: '#FF6B8A', fontSize: '12px', textAlign: 'center', marginBottom: '8px', display: 'none' } }, 'Wrong passphrase.');
+        form.appendChild(el('label', { class: 'form-label' }, 'Repository (owner/name)'));
+        const repoInput = el('input', { class: 'form-input', placeholder: 'mpat777/casamorf' });
+        form.appendChild(repoInput);
+
+        const errMsg = el('p', { style: { color: '#FF6B8A', fontSize: '12px', textAlign: 'center', marginBottom: '8px', display: 'none' } });
+        form.appendChild(errMsg);
 
         const btn = el('button', {
             class: 'btn-primary w-full',
             onClick: async () => {
-                const pass = input.value.trim();
-                if (!pass) return;
-                if (!isNew) {
-                    const ok = await CasaStore.verifyPassphrase(pass);
-                    if (!ok) { errMsg.style.display = 'block'; input.value = ''; return; }
+                const token = tokenInput.value.trim();
+                const repo = repoInput.value.trim();
+                if (!token || !repo) return;
+                btn.textContent = 'Connecting...';
+                btn.disabled = true;
+                try {
+                    await CasaStore.connect(token, repo);
+                    CasaStore.saveCredentials(token, repo);
+                    await loadAll();
+                    render();
+                } catch (e) {
+                    errMsg.textContent = 'Connection failed. Check token & repo name.';
+                    errMsg.style.display = 'block';
+                    btn.textContent = 'Connect';
+                    btn.disabled = false;
                 }
-                await CasaStore.unlock(pass);
-                await loadAll();
-                render();
             }
-        }, icon('lock'), isNew ? 'Create & Encrypt' : 'Unlock');
+        }, '🔗 Connect');
 
-        input.addEventListener('keydown', e => { if (e.key === 'Enter') btn.click(); });
-
-        form.appendChild(input);
-        form.appendChild(errMsg);
         form.appendChild(btn);
 
-        if (!isNew) {
-            form.appendChild(el('p', { style: { color: '#5C6478', fontSize: '11px', textAlign: 'center', marginTop: '12px' } },
-                '🔒 AES-256-GCM encrypted. Data stays on your device.'));
-        }
+        form.appendChild(el('p', { style: { color: '#5C6478', fontSize: '11px', textAlign: 'center', marginTop: '14px', lineHeight: '1.5' } },
+            'Create a PAT at GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens. Grant "Contents: Read and write" for your repo.'));
 
         page.appendChild(form);
         container.appendChild(page);
-        setTimeout(() => input.focus(), 100);
+        setTimeout(() => tokenInput.focus(), 100);
     }
 
     // ========================================================================
-    // AUTH (Name + Avatar)
+    // PIN SCREEN
     // ========================================================================
-    function renderAuth(container) {
+    function renderPinScreen(container, isNew) {
         const page = el('div', { class: 'lock-screen' });
         page.appendChild(el('div', { class: 'lock-logo' }, '🏠'));
         page.appendChild(el('h1', { style: { color: '#fff', marginTop: '14px' } }, 'CasaMorf'));
-        page.appendChild(el('p', { style: { color: '#8B93A7', fontSize: '14px', marginTop: '4px' } }, 'your household, organized.'));
+        page.appendChild(el('p', { style: { color: '#8B93A7', fontSize: '13px', marginTop: '4px' } },
+            isNew ? 'Set a PIN to protect your household.' : 'Enter your PIN.'));
 
-        const form = el('div', { style: { width: '100%', maxWidth: '340px', marginTop: '28px' } });
+        const form = el('div', { style: { width: '100%', maxWidth: '280px', marginTop: '28px' } });
+
+        const pinInput = el('input', {
+            class: 'form-input',
+            type: 'password',
+            inputmode: 'numeric',
+            maxlength: '6',
+            placeholder: isNew ? 'New PIN (4-6 digits)' : 'PIN',
+            style: { textAlign: 'center', fontSize: '24px', letterSpacing: '8px' },
+        });
+
+        const errMsg = el('p', { style: { color: '#FF6B8A', fontSize: '12px', textAlign: 'center', marginBottom: '8px', display: 'none' } }, 'Wrong PIN');
+
+        const btn = el('button', {
+            class: 'btn-primary w-full',
+            onClick: async () => {
+                const pin = pinInput.value.trim();
+                if (pin.length < 4) return;
+                if (isNew) {
+                    await CasaStore.setPin(pin);
+                    CasaStore.setSessionAuth();
+                    toast('PIN set ✓');
+                    render();
+                } else {
+                    const ok = await CasaStore.verifyPin(pin);
+                    if (!ok) { errMsg.style.display = 'block'; pinInput.value = ''; return; }
+                    CasaStore.setSessionAuth();
+                    render();
+                }
+            }
+        }, isNew ? '🔒 Set PIN' : '🔓 Unlock');
+
+        pinInput.addEventListener('keydown', e => { if (e.key === 'Enter') btn.click(); });
+
+        form.appendChild(pinInput);
+        form.appendChild(errMsg);
+        form.appendChild(btn);
+        page.appendChild(form);
+        container.appendChild(page);
+        setTimeout(() => pinInput.focus(), 100);
+    }
+
+    // ========================================================================
+    // USER PICKER (who is using the app right now?)
+    // ========================================================================
+    function renderUserPicker(container) {
+        const page = el('div', { class: 'lock-screen' });
+        page.appendChild(el('div', { class: 'lock-logo' }, '🏠'));
+        page.appendChild(el('h1', { style: { color: '#fff', marginTop: '14px' } }, 'CasaMorf'));
+        page.appendChild(el('p', { style: { color: '#8B93A7', fontSize: '13px', marginTop: '4px' } }, 'Who are you?'));
+
+        const grid = el('div', { style: { display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center', marginTop: '24px' } });
+
+        if (state.members.length > 0) {
+            state.members.forEach(m => {
+                const card = el('button', {
+                    style: {
+                        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px',
+                        padding: '18px 24px', borderRadius: '16px', border: '2px solid #262D3D',
+                        background: '#1A1F2B', cursor: 'pointer', minWidth: '100px',
+                    },
+                    onClick: () => {
+                        state.currentUser = m;
+                        localStorage.setItem('casamorf-current-user', JSON.stringify(m));
+                        render();
+                    }
+                },
+                    el('span', { style: { fontSize: '36px' } }, m.avatar),
+                    el('span', { style: { fontSize: '14px', color: '#E4E7ED', fontWeight: '600', fontFamily: "'Space Grotesk', sans-serif" } }, m.name),
+                );
+                grid.appendChild(card);
+            });
+        }
+
+        // Add new member button
+        const addCard = el('button', {
+            style: {
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px',
+                padding: '18px 24px', borderRadius: '16px', border: '2px dashed #333B50',
+                background: 'transparent', cursor: 'pointer', minWidth: '100px',
+            },
+            onClick: () => { state.modal = 'addMember'; renderAddMemberInline(container); }
+        },
+            el('span', { style: { fontSize: '36px' } }, '➕'),
+            el('span', { style: { fontSize: '12px', color: '#5C6478', fontFamily: "'Space Grotesk', sans-serif" } }, 'New member'),
+        );
+        grid.appendChild(addCard);
+
+        page.appendChild(grid);
+        container.appendChild(page);
+    }
+
+    function renderAddMemberInline(container) {
+        container.innerHTML = '';
+        const page = el('div', { class: 'lock-screen' });
+        page.appendChild(el('h2', { style: { color: '#fff' } }, 'New member'));
+
+        const form = el('div', { style: { width: '100%', maxWidth: '340px', marginTop: '20px' } });
         let selectedAvatar = '🧑‍💻';
 
         form.appendChild(el('label', { class: 'form-label' }, 'Avatar'));
@@ -238,12 +365,8 @@ const App = (() => {
                 },
                 onClick: () => {
                     selectedAvatar = a;
-                    avatarRow.querySelectorAll('button').forEach(b => {
-                        b.style.border = '2px solid #262D3D';
-                        b.style.background = '#141820';
-                    });
-                    abtn.style.border = '2px solid #5AE4A8';
-                    abtn.style.background = 'rgba(90,228,168,0.12)';
+                    avatarRow.querySelectorAll('button').forEach(b => { b.style.border = '2px solid #262D3D'; b.style.background = '#141820'; });
+                    abtn.style.border = '2px solid #5AE4A8'; abtn.style.background = 'rgba(90,228,168,0.12)';
                 }
             }, a);
             avatarRow.appendChild(abtn);
@@ -253,22 +376,27 @@ const App = (() => {
         form.appendChild(el('label', { class: 'form-label' }, 'Name'));
         const nameInput = el('input', { class: 'form-input', placeholder: 'e.g. Patrick' });
 
-        const submitBtn = el('button', {
-            class: 'btn-primary w-full',
-            style: { marginTop: '14px' },
+        const btn = el('button', {
+            class: 'btn-primary w-full', style: { marginTop: '10px' },
             onClick: async () => {
                 const name = nameInput.value.trim();
                 if (!name) return;
-                state.user = { id: uid(), name, avatar: selectedAvatar, createdAt: new Date().toISOString() };
+                const member = { id: uid(), name, avatar: selectedAvatar };
+                state.members.push(member);
+                state.currentUser = member;
+                localStorage.setItem('casamorf-current-user', JSON.stringify(member));
+                // Set household name if first member
+                if (!state.household) {
+                    state.household = { name: 'CasaMorf 🏠', createdAt: new Date().toISOString() };
+                }
                 await saveAll();
                 render();
             }
         }, "Let's go");
 
-        nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') submitBtn.click(); });
-
+        nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') btn.click(); });
         form.appendChild(nameInput);
-        form.appendChild(submitBtn);
+        form.appendChild(btn);
         page.appendChild(form);
         container.appendChild(page);
         setTimeout(() => nameInput.focus(), 100);
@@ -278,27 +406,40 @@ const App = (() => {
     // HEADER
     // ========================================================================
     function renderHeader() {
+        const syncDot = el('div', {
+            id: 'sync-dot',
+            style: { width: '6px', height: '6px', borderRadius: '50%', background: '#5AE4A8' }
+        });
+
         return el('header', { class: 'header' },
             el('div', { class: 'header-brand' },
                 el('div', { class: 'header-logo' }, '🏠'),
                 el('div', {},
                     el('div', { class: 'header-title' }, 'CasaMorf'),
-                    el('div', { class: 'header-sub' }, state.household?.name || 'no household yet'),
+                    el('div', { class: 'header-sub flex items-center', style: { gap: '4px' } },
+                        syncDot,
+                        el('span', {}, state.household?.name || 'not set up'),
+                    ),
                 ),
             ),
-            el('button', {
-                class: 'btn-icon',
-                onClick: async () => {
-                    // Export encrypted backup
-                    const json = CasaStore.exportAll();
-                    const blob = new Blob([json], { type: 'application/json' });
-                    const url = URL.createObjectURL(blob);
-                    const a = el('a', { href: url, download: `casamorf-backup-${new Date().toISOString().slice(0, 10)}.json` });
-                    a.click();
-                    URL.revokeObjectURL(url);
-                    toast('Encrypted backup saved');
-                }
-            }, icon('download')),
+            el('div', { class: 'flex items-center', style: { gap: '4px' } },
+                el('button', {
+                    class: 'btn-icon',
+                    title: 'Sync',
+                    onClick: async () => {
+                        state.syncing = true;
+                        updateSyncIndicator();
+                        toast('Syncing...');
+                        await CasaStore.refresh();
+                        await loadAll();
+                        state.syncing = false;
+                        render();
+                        toast('Synced ✓');
+                    }
+                }, icon('refresh')),
+                el('span', { style: { fontSize: '20px', cursor: 'pointer' }, onClick: () => { state.tab = 'household'; render(); } },
+                    state.currentUser?.avatar || '👤'),
+            ),
         );
     }
 
@@ -308,14 +449,12 @@ const App = (() => {
     function renderNav() {
         const openItems = state.items.filter(i => !i.checked).length;
         const openTasks = state.tasks.filter(t => t.status === 'open').length;
-
         const tabs = [
             { id: 'dashboard', ic: 'home', label: 'Home' },
             { id: 'shopping', ic: 'cart', label: 'Shop', badge: openItems },
             { id: 'tasks', ic: 'tasks', label: 'Tasks', badge: openTasks },
             { id: 'household', ic: 'users', label: 'Crib' },
         ];
-
         const nav = el('nav', { class: 'bottom-nav' });
         tabs.forEach(t => {
             const item = el('button', {
@@ -343,73 +482,42 @@ const App = (() => {
         const doneToday = state.tasks.filter(t => t.status === 'done' && t.completedAt &&
             new Date(t.completedAt).toDateString() === new Date().toDateString()).length;
 
-        // No household
-        if (!state.household) {
-            const card = el('div', { class: 'card text-center', style: { padding: '28px' } });
-            card.appendChild(el('div', { style: { fontSize: '36px' } }, '👋'));
-            card.appendChild(el('h2', { style: { color: '#fff', marginTop: '10px' } }, `Welcome, ${state.user.name}!`));
-            card.appendChild(el('p', { class: 'text-sec', style: { fontSize: '13px', marginTop: '6px' } }, 'Create your crib to get started.'));
-            card.appendChild(renderInlineCreate());
-            page.appendChild(card);
-            container.appendChild(page);
-            return;
-        }
-
         // Greeting
-        page.appendChild(el('h2', { style: { color: '#fff', fontSize: '22px' } }, `Hey ${state.user.name} ${state.user.avatar}`));
+        page.appendChild(el('h2', { style: { color: '#fff', fontSize: '22px' } },
+            `Hey ${state.currentUser?.name || ''} ${state.currentUser?.avatar || ''}`));
         page.appendChild(el('p', { class: 'text-sec', style: { fontSize: '13px', marginTop: '2px', marginBottom: '16px' } },
             new Date().toLocaleDateString('de-CH', { weekday: 'long', day: 'numeric', month: 'long' })));
 
         // Stats
         const stats = el('div', { class: 'stats-grid' });
         stats.appendChild(renderStat(icons.cart, unchecked.length, 'Shopping', '#47C9FF', 'rgba(71,201,255,0.12)', () => { state.tab = 'shopping'; render(); }));
-        stats.appendChild(renderStat(icons.alert, openTasks.length, 'Open', '#FF6B8A', 'rgba(255,107,138,0.12)', () => { state.tab = 'tasks'; render(); }));
-        stats.appendChild(renderStat(icons.flame, doneToday, 'Done today', '#5AE4A8', 'rgba(90,228,168,0.12)'));
+        stats.appendChild(renderStat(icons.alert, openTasks.length, 'Offen', '#FF6B8A', 'rgba(255,107,138,0.12)', () => { state.tab = 'tasks'; render(); }));
+        stats.appendChild(renderStat(icons.flame, doneToday, 'Heute erledigt', '#5AE4A8', 'rgba(90,228,168,0.12)'));
         page.appendChild(stats);
 
         // Shopping preview
         if (unchecked.length > 0) {
-            const sec = renderSection('Shopping list', unchecked.length, () => { state.tab = 'shopping'; render(); });
+            const sec = renderSection('Einkaufsliste', unchecked.length, () => { state.tab = 'shopping'; render(); });
             unchecked.slice(0, 4).forEach(item => {
                 const cat = CATEGORIES.find(c => c.id === item.category) || CATEGORIES[8];
                 sec.appendChild(renderItemRow(item, cat, true));
             });
-            if (unchecked.length > 4) {
-                sec.appendChild(el('button', {
-                    class: 'btn-link', style: { marginTop: '4px' },
-                    onClick: () => { state.tab = 'shopping'; render(); }
-                }, `+${unchecked.length - 4} more `, icon('chevron')));
-            }
+            if (unchecked.length > 4) sec.appendChild(el('button', { class: 'btn-link', style: { marginTop: '4px' }, onClick: () => { state.tab = 'shopping'; render(); } }, `+${unchecked.length - 4} mehr `, icon('chevron')));
             page.appendChild(sec);
         }
 
-        // Tasks preview
+        // Task preview
         if (openTasks.length > 0) {
-            const sec = renderSection('Open tasks', openTasks.length, () => { state.tab = 'tasks'; render(); });
+            const sec = renderSection('Offene Tasks', openTasks.length, () => { state.tab = 'tasks'; render(); });
             openTasks.slice(0, 3).forEach(task => sec.appendChild(renderTaskRow(task)));
             page.appendChild(sec);
         }
 
-        // All clear
         if (unchecked.length === 0 && openTasks.length === 0) {
             const card = el('div', { class: 'card text-center', style: { padding: '28px' } });
             card.innerHTML = icons.sparkles;
-            card.appendChild(el('p', { class: 'text-sec', style: { fontSize: '14px', marginTop: '10px' } }, 'All caught up! 🎉'));
+            card.appendChild(el('p', { class: 'text-sec', style: { fontSize: '14px', marginTop: '10px' } }, 'Alles erledigt! 🎉'));
             page.appendChild(card);
-        }
-
-        // Members
-        if (state.household.members.length > 0) {
-            const sec = renderSection('Crib members');
-            const row = el('div', { style: { display: 'flex', gap: '8px' } });
-            state.household.members.forEach(m => {
-                row.appendChild(el('div', { class: 'member-chip' },
-                    el('span', { style: { fontSize: '18px' } }, m.avatar),
-                    el('span', { style: { fontSize: '11px', color: '#E4E7ED' } }, m.name),
-                ));
-            });
-            sec.appendChild(row);
-            page.appendChild(sec);
         }
 
         container.appendChild(page);
@@ -417,11 +525,8 @@ const App = (() => {
 
     function renderStat(iconHtml, value, label, color, glow, onClick) {
         const card = el('div', { class: 'stat-card', onClick: onClick || (() => {}) });
-        const glowEl = el('div', { class: 'glow', style: { background: glow } });
-        card.appendChild(glowEl);
-        const iconEl = el('div', { style: { color, marginBottom: '4px' } });
-        iconEl.innerHTML = iconHtml;
-        card.appendChild(iconEl);
+        card.appendChild(el('div', { class: 'glow', style: { background: glow } }));
+        const ic = el('div', { style: { color, marginBottom: '4px' } }); ic.innerHTML = iconHtml; card.appendChild(ic);
         card.appendChild(el('div', { class: 'value' }, String(value)));
         card.appendChild(el('div', { class: 'label' }, label));
         return card;
@@ -434,9 +539,7 @@ const App = (() => {
         left.appendChild(el('h3', {}, title));
         if (count !== undefined) left.appendChild(el('span', { class: 'section-count' }, String(count)));
         header.appendChild(left);
-        if (onMore) {
-            header.appendChild(el('button', { class: 'btn-link', onClick: onMore }, 'All ', icon('chevron')));
-        }
+        if (onMore) header.appendChild(el('button', { class: 'btn-link', onClick: onMore }, 'Alle ', icon('chevron')));
         sec.appendChild(header);
         return sec;
     }
@@ -449,34 +552,18 @@ const App = (() => {
         const unchecked = state.items.filter(i => !i.checked);
         const checked = state.items.filter(i => i.checked);
 
-        // Header
         const hdr = el('div', { class: 'flex items-center justify-between', style: { marginBottom: '14px' } });
-        hdr.appendChild(el('h2', { style: { color: '#fff' } }, 'Shopping list'));
+        hdr.appendChild(el('h2', { style: { color: '#fff' } }, 'Einkaufsliste'));
         const addBtn = el('button', { class: 'btn-add', onClick: () => { state.modal = 'addItem'; render(); } });
         addBtn.innerHTML = icons.plus;
         hdr.appendChild(addBtn);
         page.appendChild(hdr);
 
-        // Category filter
-        const pills = el('div', { class: 'pills' });
-        const filterState = { current: 'all' };
-        const allPill = el('button', { class: 'pill active', onClick: () => { filterState.current = 'all'; render(); } }, `All ${unchecked.length}`);
-        pills.appendChild(allPill);
-        CATEGORIES.filter(c => unchecked.some(i => i.category === c.id)).forEach(c => {
-            pills.appendChild(el('button', { class: 'pill', onClick: () => { /* simplified: just show all */ } },
-                `${c.icon} ${unchecked.filter(i => i.category === c.id).length}`));
-        });
-        page.appendChild(pills);
-
-        // Empty
         if (unchecked.length === 0 && checked.length === 0) {
             const card = el('div', { class: 'card text-center', style: { padding: '28px' } });
             card.appendChild(el('div', { style: { fontSize: '28px' } }, '🛒'));
-            card.appendChild(el('p', { class: 'text-sec', style: { marginTop: '10px' } }, 'List is empty'));
-            card.appendChild(el('button', {
-                class: 'btn-primary', style: { marginTop: '10px', fontSize: '13px' },
-                onClick: () => { state.modal = 'addItem'; render(); }
-            }, icon('plus'), ' Add item'));
+            card.appendChild(el('p', { class: 'text-sec', style: { marginTop: '10px' } }, 'Liste ist leer'));
+            card.appendChild(el('button', { class: 'btn-primary', style: { marginTop: '10px', fontSize: '13px' }, onClick: () => { state.modal = 'addItem'; render(); } }, icon('plus'), ' Hinzufügen'));
             page.appendChild(card);
         }
 
@@ -486,29 +573,28 @@ const App = (() => {
 
         CATEGORIES.filter(c => grouped[c.id]).forEach(cat => {
             const catSec = el('div', { style: { marginBottom: '14px' } });
-            const catHeader = el('div', { class: 'flex items-center', style: { gap: '5px', marginBottom: '5px' } });
-            catHeader.appendChild(el('span', { style: { fontSize: '13px' } }, cat.icon));
-            catHeader.appendChild(el('span', { style: { fontSize: '11px', fontWeight: '600', color: cat.color, textTransform: 'uppercase', letterSpacing: '0.5px' } }, cat.label));
-            catSec.appendChild(catHeader);
+            catSec.appendChild(el('div', { class: 'flex items-center', style: { gap: '5px', marginBottom: '5px' } },
+                el('span', { style: { fontSize: '13px' } }, cat.icon),
+                el('span', { style: { fontSize: '11px', fontWeight: '600', color: cat.color, textTransform: 'uppercase', letterSpacing: '0.5px' } }, cat.label),
+            ));
             grouped[cat.id].forEach(item => catSec.appendChild(renderItemRow(item, cat)));
             page.appendChild(catSec);
         });
 
-        // Checked
+        // Checked items
         if (checked.length > 0) {
             const sec = el('div', { style: { marginTop: '16px' } });
             const hdr2 = el('div', { class: 'flex items-center justify-between', style: { marginBottom: '6px' } });
-            hdr2.appendChild(el('span', { class: 'text-muted', style: { fontSize: '12px' } }, `✓ Done (${checked.length})`));
+            hdr2.appendChild(el('span', { class: 'text-muted', style: { fontSize: '12px' } }, `✓ Erledigt (${checked.length})`));
             hdr2.appendChild(el('button', {
                 class: 'btn-link', style: { color: '#FF6B8A', fontSize: '11px' },
-                onClick: async () => { state.items = state.items.filter(i => !i.checked); await saveAll(); toast(`${checked.length} removed`); render(); }
-            }, icon('trash'), ' Clear'));
+                onClick: async () => { state.items = state.items.filter(i => !i.checked); await saveAll(); toast(`${checked.length} entfernt`); render(); }
+            }, icon('trash'), ' Leeren'));
             sec.appendChild(hdr2);
             checked.forEach(item => {
                 const cat = CATEGORIES.find(c => c.id === item.category) || CATEGORIES[8];
                 const row = el('div', { class: 'row faded', onClick: async () => { item.checked = false; await saveAll(); render(); } });
-                const chk = el('div', { class: 'check done' });
-                chk.innerHTML = icons.check;
+                const chk = el('div', { class: 'check done' }); chk.innerHTML = icons.check;
                 row.appendChild(chk);
                 row.appendChild(el('span', { class: 'flex-1 text-muted text-strike', style: { fontSize: '14px' } }, `${cat.icon} ${item.name}`));
                 sec.appendChild(row);
@@ -520,38 +606,24 @@ const App = (() => {
         const fab = el('button', { class: 'fab', onClick: () => { state.modal = 'addItem'; render(); } });
         fab.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"/><path d="M12 5v14"/></svg>';
         page.appendChild(fab);
-
         container.appendChild(page);
     }
 
-    function renderItemRow(item, cat, dashboardMode) {
+    function renderItemRow(item, cat, compact) {
         const row = el('div', { class: 'row' });
         const left = el('div', {
-            class: 'flex items-center flex-1',
-            style: { gap: '10px', cursor: 'pointer' },
-            onClick: async () => {
-                item.checked = !item.checked;
-                item.checkedAt = item.checked ? new Date().toISOString() : null;
-                await saveAll();
-                render();
-            }
+            class: 'flex items-center flex-1', style: { gap: '10px', cursor: 'pointer' },
+            onClick: async () => { item.checked = !item.checked; item.checkedBy = item.checked ? state.currentUser?.name : null; await saveAll(); render(); }
         });
-        const chk = el('div', { class: 'check', style: { borderColor: cat.color } });
-        left.appendChild(chk);
+        left.appendChild(el('div', { class: 'check', style: { borderColor: cat.color } }));
         const content = el('div', { class: 'flex-1' });
         content.appendChild(el('span', { style: { fontSize: '14px', color: '#E4E7ED' } }, `${cat.icon} ${item.name}`));
         if (item.note) content.appendChild(el('p', { style: { fontSize: '11px', color: '#5C6478', marginTop: '1px' } }, item.note));
         left.appendChild(content);
-        if (item.quantity > 1) left.appendChild(el('span', {
-            style: { fontSize: '11px', color: '#5C6478', background: '#141820', padding: '1px 7px', borderRadius: '7px' }
-        }, `×${item.quantity}`));
+        if (item.quantity > 1) left.appendChild(el('span', { style: { fontSize: '11px', color: '#5C6478', background: '#141820', padding: '1px 7px', borderRadius: '7px' } }, `×${item.quantity}`));
         row.appendChild(left);
-
-        if (!dashboardMode) {
-            const del = el('button', {
-                class: 'btn-icon',
-                onClick: async (e) => { e.stopPropagation(); state.items = state.items.filter(i => i.id !== item.id); await saveAll(); render(); }
-            });
+        if (!compact) {
+            const del = el('button', { class: 'btn-icon', onClick: async (e) => { e.stopPropagation(); state.items = state.items.filter(i => i.id !== item.id); await saveAll(); render(); } });
             del.innerHTML = icons.trash;
             row.appendChild(del);
         }
@@ -567,7 +639,7 @@ const App = (() => {
         const done = state.tasks.filter(t => t.status === 'done');
 
         const hdr = el('div', { class: 'flex items-center justify-between', style: { marginBottom: '14px' } });
-        hdr.appendChild(el('h2', { style: { color: '#fff' } }, 'Tasks'));
+        hdr.appendChild(el('h2', { style: { color: '#fff' } }, 'Aufgaben'));
         const addBtn = el('button', { class: 'btn-add', onClick: () => { state.modal = 'addTask'; render(); } });
         addBtn.innerHTML = icons.plus;
         hdr.appendChild(addBtn);
@@ -576,25 +648,13 @@ const App = (() => {
         if (open.length === 0 && done.length === 0) {
             const card = el('div', { class: 'card text-center', style: { padding: '28px' } });
             card.innerHTML = icons.sparkles;
-            card.appendChild(el('p', { class: 'text-sec', style: { marginTop: '10px' } }, 'No tasks yet'));
-            card.appendChild(el('button', {
-                class: 'btn-primary', style: { marginTop: '10px', fontSize: '13px' },
-                onClick: () => { state.modal = 'addTask'; render(); }
-            }, icon('plus'), ' Create task'));
+            card.appendChild(el('p', { class: 'text-sec', style: { marginTop: '10px' } }, 'Keine Aufgaben'));
+            card.appendChild(el('button', { class: 'btn-primary', style: { marginTop: '10px', fontSize: '13px' }, onClick: () => { state.modal = 'addTask'; render(); } }, icon('plus'), ' Erstellen'));
             page.appendChild(card);
         }
 
-        if (open.length > 0) {
-            const sec = renderSection('Open', open.length);
-            open.forEach(t => sec.appendChild(renderTaskRow(t)));
-            page.appendChild(sec);
-        }
-
-        if (done.length > 0) {
-            const sec = renderSection('Completed', done.length);
-            done.slice(0, 10).forEach(t => sec.appendChild(renderTaskRow(t, true)));
-            page.appendChild(sec);
-        }
+        if (open.length > 0) { const sec = renderSection('Offen', open.length); open.forEach(t => sec.appendChild(renderTaskRow(t))); page.appendChild(sec); }
+        if (done.length > 0) { const sec = renderSection('Erledigt', done.length); done.slice(0, 10).forEach(t => sec.appendChild(renderTaskRow(t, true))); page.appendChild(sec); }
 
         const fab = el('button', { class: 'fab', onClick: () => { state.modal = 'addTask'; render(); } });
         fab.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"/><path d="M12 5v14"/></svg>';
@@ -605,45 +665,29 @@ const App = (() => {
     function renderTaskRow(task, isDone) {
         const freq = FREQUENCIES.find(f => f.id === task.frequency);
         const row = el('div', { class: `row${isDone ? ' faded' : ''}` });
-
         const left = el('div', {
-            class: 'flex items-center flex-1',
-            style: { gap: '10px', cursor: 'pointer' },
+            class: 'flex items-center flex-1', style: { gap: '10px', cursor: 'pointer' },
             onClick: async () => {
                 task.status = task.status === 'open' ? 'done' : 'open';
                 task.completedAt = task.status === 'done' ? new Date().toISOString() : null;
-                task.completedBy = task.status === 'done' ? state.user.name : null;
+                task.completedBy = task.status === 'done' ? state.currentUser?.name : null;
                 await saveAll();
                 render();
             }
         });
-
-        const chk = el('div', { class: `check${isDone ? ' done' : ''}`, style: { borderColor: isDone ? '#5AE4A8' : '#5AE4A8' } });
+        const chk = el('div', { class: `check${isDone ? ' done' : ''}` });
         if (isDone) chk.innerHTML = icons.check;
         left.appendChild(chk);
-
         const content = el('div', { class: 'flex-1' });
-        content.appendChild(el('span', {
-            style: { fontSize: '14px', color: isDone ? '#5C6478' : '#E4E7ED', textDecoration: isDone ? 'line-through' : 'none' }
-        }, task.name));
-
+        content.appendChild(el('span', { style: { fontSize: '14px', color: isDone ? '#5C6478' : '#E4E7ED', textDecoration: isDone ? 'line-through' : 'none' } }, task.name));
         const meta = el('div', { class: 'flex items-center', style: { gap: '6px', marginTop: '2px' } });
         if (task.assignedTo) meta.appendChild(el('span', { style: { fontSize: '11px', color: '#8B93A7' } }, `→ ${task.assignedTo}`));
-        if (task.frequency !== 'once') {
-            const rep = el('span', { style: { fontSize: '10px', color: '#5AE4A8', display: 'flex', alignItems: 'center', gap: '2px' } });
-            rep.innerHTML = icons.repeat;
-            rep.appendChild(document.createTextNode(` ${freq?.short || ''}`));
-            meta.appendChild(rep);
-        }
-        if (isDone && task.completedAt) meta.appendChild(el('span', { style: { fontSize: '10px', color: '#5C6478' } }, fmtDate(task.completedAt)));
+        if (task.frequency !== 'once') { const rep = el('span', { style: { fontSize: '10px', color: '#5AE4A8', display: 'flex', alignItems: 'center', gap: '2px' } }); rep.innerHTML = icons.repeat; rep.appendChild(document.createTextNode(` ${freq?.short || ''}`)); meta.appendChild(rep); }
+        if (isDone && task.completedBy) meta.appendChild(el('span', { style: { fontSize: '10px', color: '#5C6478' } }, `${task.completedBy} · ${fmtDate(task.completedAt)}`));
         content.appendChild(meta);
         left.appendChild(content);
         row.appendChild(left);
-
-        const del = el('button', {
-            class: 'btn-icon',
-            onClick: async (e) => { e.stopPropagation(); state.tasks = state.tasks.filter(t => t.id !== task.id); await saveAll(); render(); }
-        });
+        const del = el('button', { class: 'btn-icon', onClick: async (e) => { e.stopPropagation(); state.tasks = state.tasks.filter(t => t.id !== task.id); await saveAll(); render(); } });
         del.innerHTML = icons.trash;
         row.appendChild(del);
         return row;
@@ -654,93 +698,44 @@ const App = (() => {
     // ========================================================================
     function renderHousehold(container) {
         const page = el('div', { class: 'page' });
-        page.appendChild(el('h2', { style: { color: '#fff', marginBottom: '14px' } }, 'Your Crib'));
-
-        if (!state.household) {
-            const card = el('div', { class: 'card text-center', style: { padding: '28px' } });
-            card.appendChild(el('div', { style: { fontSize: '28px' } }, '🏠'));
-            card.appendChild(el('p', { class: 'text-sec', style: { marginTop: '10px' } }, 'No crib created yet'));
-            card.appendChild(renderInlineCreate());
-            page.appendChild(card);
-            container.appendChild(page);
-            return;
-        }
-
-        // Household card
-        const card = el('div', { class: 'card', style: { padding: '18px', position: 'relative', overflow: 'hidden' } });
-        card.appendChild(el('div', { style: { position: 'absolute', top: '-20px', right: '-20px', width: '70px', height: '70px', borderRadius: '50%', background: 'rgba(90,228,168,0.12)', filter: 'blur(20px)' } }));
-        card.appendChild(el('h3', { style: { fontSize: '18px', color: '#fff' } }, state.household.name));
-        card.appendChild(el('p', { style: { fontSize: '11px', color: '#5C6478', marginTop: '3px' } }, `Created ${fmtDate(state.household.createdAt)}`));
-
-        const invite = el('div', { class: 'invite-box' });
-        invite.appendChild(el('p', { style: { fontSize: '10px', color: '#5C6478', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '4px' } }, 'Invite Code'));
-        invite.appendChild(el('p', { class: 'invite-code' }, state.household.inviteCode));
-        invite.appendChild(el('p', { style: { fontSize: '11px', color: '#5C6478', marginTop: '6px' } }, 'Share this code to invite roommates'));
-        card.appendChild(invite);
-        page.appendChild(card);
+        page.appendChild(el('h2', { style: { color: '#fff', marginBottom: '14px' } }, 'Haushalt'));
 
         // Members
-        const sec = renderSection('Members', state.household.members.length);
-        state.household.members.forEach(m => {
+        const sec = renderSection('Mitglieder', state.members.length);
+        state.members.forEach(m => {
             const row = el('div', { class: 'row', style: { padding: '12px' } });
             row.appendChild(el('span', { style: { fontSize: '26px' } }, m.avatar));
-            const info = el('div', { class: 'flex-1' });
-            const nameRow = el('div', { class: 'flex items-center' });
-            nameRow.appendChild(el('span', { style: { fontSize: '14px', fontWeight: '500', color: '#E4E7ED' } }, m.name));
-            if (m.role === 'admin') nameRow.appendChild(el('span', {
-                style: { fontSize: '9px', color: '#FFB347', marginLeft: '6px', background: 'rgba(255,179,71,0.1)', padding: '1px 6px', borderRadius: '6px', textTransform: 'uppercase', fontWeight: '700', letterSpacing: '0.5px' }
-            }, 'admin'));
-            info.appendChild(nameRow);
-            row.appendChild(info);
+            row.appendChild(el('span', { style: { fontSize: '14px', fontWeight: '500', color: '#E4E7ED', flex: '1' } }, m.name));
+            if (state.currentUser?.id === m.id) row.appendChild(el('span', { style: { fontSize: '9px', color: '#5AE4A8', background: 'rgba(90,228,168,0.1)', padding: '1px 6px', borderRadius: '6px', fontWeight: '700' } }, 'YOU'));
             sec.appendChild(row);
         });
+        // Add member button
+        sec.appendChild(el('button', {
+            class: 'btn-primary w-full', style: { marginTop: '8px', fontSize: '13px' },
+            onClick: () => { state.currentUser = null; render(); }
+        }, icon('plus'), ' Mitglied hinzufügen'));
         page.appendChild(sec);
 
-        // Export / Backup
-        const backupSec = renderSection('Backup');
-        const backupBtn = el('button', {
+        // Backup
+        const backupSec = renderSection('Backup & Settings');
+        backupSec.appendChild(el('button', {
             class: 'btn-primary w-full',
             onClick: () => {
                 const json = CasaStore.exportAll();
                 const blob = new Blob([json], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = el('a', { href: url, download: `casamorf-backup-${new Date().toISOString().slice(0, 10)}.json` });
-                a.click();
-                URL.revokeObjectURL(url);
-                toast('Encrypted backup downloaded');
+                a.click(); URL.revokeObjectURL(url);
+                toast('Backup gespeichert');
             }
-        }, icon('download'), ' Export encrypted backup');
-        backupSec.appendChild(backupBtn);
-        backupSec.appendChild(el('p', { style: { fontSize: '11px', color: '#5C6478', textAlign: 'center', marginTop: '8px' } },
-            '🔒 Backup is AES-256-GCM encrypted. Safe for public repos.'));
+        }, icon('download'), ' Backup exportieren'));
+        backupSec.appendChild(el('button', {
+            class: 'btn-primary w-full', style: { marginTop: '8px', background: '#FF6B8A' },
+            onClick: () => { CasaStore.clearCredentials(); location.reload(); }
+        }, icon('settings'), ' GitHub Verbindung zurücksetzen'));
         page.appendChild(backupSec);
 
         container.appendChild(page);
-    }
-
-    function renderInlineCreate() {
-        const wrap = el('div', { style: { marginTop: '16px' } });
-        const input = el('input', { class: 'form-input', placeholder: 'e.g. CasaMorf 🏡', style: { textAlign: 'center' } });
-        const btn = el('button', {
-            class: 'btn-primary w-full', style: { marginTop: '8px' },
-            onClick: async () => {
-                const name = input.value.trim();
-                if (!name) return;
-                state.household = {
-                    id: uid(), name,
-                    members: [{ ...state.user, role: 'admin' }],
-                    createdAt: new Date().toISOString(),
-                    inviteCode: Math.random().toString(36).slice(2, 8).toUpperCase()
-                };
-                await saveAll();
-                toast(`"${name}" created!`);
-                render();
-            }
-        }, icon('home'), ' Create crib');
-        input.addEventListener('keydown', e => { if (e.key === 'Enter') btn.click(); });
-        wrap.appendChild(input);
-        wrap.appendChild(btn);
-        return wrap;
     }
 
     // ========================================================================
@@ -752,20 +747,19 @@ const App = (() => {
         sheet.appendChild(el('div', { class: 'modal-handle' }));
 
         const hdr = el('div', { class: 'flex items-center justify-between', style: { marginBottom: '16px' } });
-        hdr.appendChild(el('h3', { style: { color: '#fff' } }, 'Add item'));
-        const closeBtn = el('button', { class: 'btn-icon', onClick: () => { state.modal = null; render(); } });
-        closeBtn.innerHTML = icons.x;
+        hdr.appendChild(el('h3', { style: { color: '#fff' } }, 'Artikel hinzufügen'));
+        const closeBtn = el('button', { class: 'btn-icon', onClick: () => { state.modal = null; render(); } }); closeBtn.innerHTML = icons.x;
         hdr.appendChild(closeBtn);
         sheet.appendChild(hdr);
 
         let selectedCat = 'sonstiges';
         let qty = 1;
 
-        sheet.appendChild(el('label', { class: 'form-label' }, 'Item'));
-        const nameInput = el('input', { class: 'form-input', placeholder: 'e.g. Milch, Brot, Zahnpasta...' });
+        sheet.appendChild(el('label', { class: 'form-label' }, 'Artikel'));
+        const nameInput = el('input', { class: 'form-input', placeholder: 'z.B. Milch, Brot, Zahnpasta...' });
         sheet.appendChild(nameInput);
 
-        sheet.appendChild(el('label', { class: 'form-label' }, 'Category'));
+        sheet.appendChild(el('label', { class: 'form-label' }, 'Kategorie'));
         const catGrid = el('div', { class: 'cat-grid' });
         CATEGORIES.forEach(c => {
             const btn = el('button', {
@@ -774,32 +768,27 @@ const App = (() => {
                 onClick: () => {
                     selectedCat = c.id;
                     catGrid.querySelectorAll('button').forEach(b => { b.style.borderColor = '#262D3D'; b.style.background = '#141820'; b.style.color = '#8B93A7'; });
-                    btn.style.borderColor = c.color;
-                    btn.style.background = c.color + '18';
-                    btn.style.color = c.color;
+                    btn.style.borderColor = c.color; btn.style.background = c.color + '18'; btn.style.color = c.color;
                 }
             }, `${c.icon} ${c.label}`);
             catGrid.appendChild(btn);
         });
         sheet.appendChild(catGrid);
 
-        // Quantity + Note
         const row = el('div', { class: 'flex', style: { gap: '10px', marginBottom: '14px' } });
         const qtyWrap = el('div', { style: { flex: '1' } });
-        qtyWrap.appendChild(el('label', { class: 'form-label' }, 'Qty'));
+        qtyWrap.appendChild(el('label', { class: 'form-label' }, 'Menge'));
         const qtyRow = el('div', { class: 'flex items-center', style: { gap: '6px' } });
         const qtyDisplay = el('span', { style: { fontSize: '18px', fontWeight: '600', color: '#fff', width: '28px', textAlign: 'center' } }, '1');
         qtyRow.appendChild(el('button', { class: 'qty-btn', onClick: () => { qty = Math.max(1, qty - 1); qtyDisplay.textContent = qty; } }, '−'));
         qtyRow.appendChild(qtyDisplay);
         qtyRow.appendChild(el('button', { class: 'qty-btn', onClick: () => { qty++; qtyDisplay.textContent = qty; } }, '+'));
-        qtyWrap.appendChild(qtyRow);
-        row.appendChild(qtyWrap);
+        qtyWrap.appendChild(qtyRow); row.appendChild(qtyWrap);
 
         const noteWrap = el('div', { style: { flex: '2' } });
-        noteWrap.appendChild(el('label', { class: 'form-label' }, 'Note'));
+        noteWrap.appendChild(el('label', { class: 'form-label' }, 'Notiz'));
         const noteInput = el('input', { class: 'form-input', placeholder: 'Bio, 500ml...' });
-        noteWrap.appendChild(noteInput);
-        row.appendChild(noteWrap);
+        noteWrap.appendChild(noteInput); row.appendChild(noteWrap);
         sheet.appendChild(row);
 
         const submitBtn = el('button', {
@@ -807,17 +796,13 @@ const App = (() => {
             onClick: async () => {
                 const name = nameInput.value.trim();
                 if (!name) return;
-                state.items.unshift({
-                    id: uid(), name, category: selectedCat, quantity: qty,
-                    note: noteInput.value.trim(), checked: false,
-                    addedAt: new Date().toISOString(), addedBy: state.user.name
-                });
+                state.items.unshift({ id: uid(), name, category: selectedCat, quantity: qty, note: noteInput.value.trim(), checked: false, addedAt: new Date().toISOString(), addedBy: state.currentUser?.name });
                 await saveAll();
                 state.modal = null;
-                toast(`${name} added`);
+                toast(`${name} hinzugefügt`);
                 render();
             }
-        }, icon('cart'), ' Add');
+        }, icon('cart'), ' Hinzufügen');
 
         nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') submitBtn.click(); });
         sheet.appendChild(submitBtn);
@@ -835,52 +820,38 @@ const App = (() => {
         sheet.appendChild(el('div', { class: 'modal-handle' }));
 
         const hdr = el('div', { class: 'flex items-center justify-between', style: { marginBottom: '16px' } });
-        hdr.appendChild(el('h3', { style: { color: '#fff' } }, 'New task'));
-        const closeBtn = el('button', { class: 'btn-icon', onClick: () => { state.modal = null; render(); } });
-        closeBtn.innerHTML = icons.x;
+        hdr.appendChild(el('h3', { style: { color: '#fff' } }, 'Neue Aufgabe'));
+        const closeBtn = el('button', { class: 'btn-icon', onClick: () => { state.modal = null; render(); } }); closeBtn.innerHTML = icons.x;
         hdr.appendChild(closeBtn);
         sheet.appendChild(hdr);
 
         let selectedFreq = 'once';
         let assignedTo = '';
 
-        sheet.appendChild(el('label', { class: 'form-label' }, 'Task'));
-        const nameInput = el('input', { class: 'form-input', placeholder: 'e.g. Küche putzen, Wäsche...' });
+        sheet.appendChild(el('label', { class: 'form-label' }, 'Aufgabe'));
+        const nameInput = el('input', { class: 'form-input', placeholder: 'z.B. Küche putzen, Wäsche...' });
         sheet.appendChild(nameInput);
 
-        sheet.appendChild(el('label', { class: 'form-label' }, 'Repeat'));
+        sheet.appendChild(el('label', { class: 'form-label' }, 'Wiederholen'));
         const freqRow = el('div', { class: 'flex', style: { gap: '5px', flexWrap: 'wrap', marginBottom: '14px' } });
         FREQUENCIES.forEach(f => {
             const btn = el('button', {
                 class: 'pill' + (f.id === selectedFreq ? ' active' : ''),
-                onClick: () => {
-                    selectedFreq = f.id;
-                    freqRow.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
-                }
+                onClick: () => { selectedFreq = f.id; freqRow.querySelectorAll('button').forEach(b => b.classList.remove('active')); btn.classList.add('active'); }
             });
-            if (f.id !== 'once') { btn.innerHTML = icons.repeat + ' '; }
+            if (f.id !== 'once') btn.innerHTML = icons.repeat + ' ';
             btn.appendChild(document.createTextNode(f.label));
             freqRow.appendChild(btn);
         });
         sheet.appendChild(freqRow);
 
-        // Assign
-        if (state.household?.members?.length > 0) {
-            sheet.appendChild(el('label', { class: 'form-label' }, 'Assign to'));
+        if (state.members.length > 0) {
+            sheet.appendChild(el('label', { class: 'form-label' }, 'Zuweisen an'));
             const assignRow = el('div', { class: 'flex', style: { gap: '5px', flexWrap: 'wrap', marginBottom: '14px' } });
-            const nobodyBtn = el('button', { class: 'pill active', onClick: () => {
-                assignedTo = '';
-                assignRow.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-                nobodyBtn.classList.add('active');
-            } }, 'Nobody');
+            const nobodyBtn = el('button', { class: 'pill active', onClick: () => { assignedTo = ''; assignRow.querySelectorAll('button').forEach(b => b.classList.remove('active')); nobodyBtn.classList.add('active'); } }, 'Niemand');
             assignRow.appendChild(nobodyBtn);
-            state.household.members.forEach(m => {
-                const btn = el('button', { class: 'pill', onClick: () => {
-                    assignedTo = m.name;
-                    assignRow.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-                    btn.classList.add('active');
-                } }, `${m.avatar} ${m.name}`);
+            state.members.forEach(m => {
+                const btn = el('button', { class: 'pill', onClick: () => { assignedTo = m.name; assignRow.querySelectorAll('button').forEach(b => b.classList.remove('active')); btn.classList.add('active'); } }, `${m.avatar} ${m.name}`);
                 assignRow.appendChild(btn);
             });
             sheet.appendChild(assignRow);
@@ -891,17 +862,13 @@ const App = (() => {
             onClick: async () => {
                 const name = nameInput.value.trim();
                 if (!name) return;
-                state.tasks.unshift({
-                    id: uid(), name, frequency: selectedFreq,
-                    assignedTo: assignedTo || null, status: 'open',
-                    createdAt: new Date().toISOString(), createdBy: state.user.name
-                });
+                state.tasks.unshift({ id: uid(), name, frequency: selectedFreq, assignedTo: assignedTo || null, status: 'open', createdAt: new Date().toISOString(), createdBy: state.currentUser?.name });
                 await saveAll();
                 state.modal = null;
-                toast('Task created');
+                toast('Aufgabe erstellt');
                 render();
             }
-        }, icon('check'), ' Create task');
+        }, icon('check'), ' Erstellen');
 
         nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') submitBtn.click(); });
         sheet.appendChild(submitBtn);
@@ -913,12 +880,29 @@ const App = (() => {
     // ========================================================================
     // INIT
     // ========================================================================
-    function init() {
+    async function init() {
+        // Try to reconnect with saved credentials
+        if (CasaStore.hasCredentials()) {
+            const { token, repo } = CasaStore.getCredentials();
+            try {
+                await CasaStore.connect(token, repo);
+                await loadAll();
+                // Restore current user from localStorage
+                const saved = localStorage.getItem('casamorf-current-user');
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    // Verify user still exists in members
+                    const found = state.members.find(m => m.id === parsed.id);
+                    if (found) state.currentUser = found;
+                }
+            } catch (e) {
+                console.error("Auto-connect failed:", e);
+            }
+        }
         render();
     }
 
     return { init };
 })();
 
-// Boot
 document.addEventListener('DOMContentLoaded', App.init);

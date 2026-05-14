@@ -12,33 +12,36 @@
 
 ## Tech Stack
 
-Pure vanilla HTML/CSS/JS — no framework, no build step, no backend.
+Pure vanilla HTML/CSS/JS — no framework, no build step, no backend needed.
 
 | Component | Tech |
 |---|---|
 | Frontend | Vanilla JS, CSS custom properties |
-| Encryption | Web Crypto API (AES-256-GCM, PBKDF2) |
-| Storage | localStorage (encrypted) |
+| Data Storage | GitHub API (data/store.json in repo) |
+| Auth | PIN (SHA-256 hashed, stored in data file) |
 | Hosting | GitHub Pages |
 | Offline | Service Worker (PWA) |
 | Font | Space Grotesk |
 
-## Security
+## How It Works
 
-All data is encrypted client-side with AES-256-GCM before being stored in localStorage:
+Data is stored as a JSON file (`data/store.json`) directly in your GitHub repo via the GitHub API. Both devices read/write the same file — no external backend needed.
 
-- Key derivation: PBKDF2 with SHA-256, 310,000 iterations (OWASP recommended)
-- Each encryption uses a random 12-byte IV
-- Passphrase never leaves the browser
-- Encrypted backup JSON is safe to commit to a public repo
+1. On first launch, enter your GitHub PAT and repo name (one-time setup per device)
+2. Set a PIN to protect the app
+3. All changes sync to GitHub automatically
 
-## Deploy
+## Setup
 
-1. Clone this repo
-2. Enable GitHub Pages (Settings → Pages → Source: main branch)
-3. Done — visit `https://<username>.github.io/casamorf/`
+1. Create a GitHub repo (e.g. `casamorf`)
+2. Push this code to it
+3. Enable GitHub Pages (Settings → Pages → GitHub Actions)
+4. Create a **Fine-grained PAT**: GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens
+   - Scope: your `casamorf` repo only
+   - Permission: **Contents: Read and write**
+5. Open the app, enter PAT + repo name, set PIN — done
 
-No build step, no npm install, no server required.
+Both phones use the same PAT and repo. Data syncs through GitHub.
 
 ## License
 
