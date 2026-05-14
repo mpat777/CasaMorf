@@ -118,13 +118,6 @@ const App = (() => {
         updateSyncIndicator();
     }
 
-    async function loadAll() {
-        state.household = await CasaStore.load('household', null);
-        state.members = await CasaStore.load('members', []);
-        state.items = await CasaStore.load('items', []);
-        state.tasks = await CasaStore.load('tasks', []);
-    }
-
     function updateSyncIndicator() {
         const dot = $('#sync-dot');
         if (dot) dot.style.background = state.syncing ? '#FFB347' : '#5AE4A8';
@@ -148,27 +141,25 @@ const App = (() => {
         const app = $('#app');
         app.innerHTML = '';
 
-        // Step 1: GitHub credentials
-        if (!CasaStore.hasCredentials() || !CasaStore.isConnected()) {
+        // Step 1: First time setup OR returning but not yet unlocked
+        if (!CasaStore.isConnected()) {
+            // No credentials saved → full setup (repo + token + password)
             if (!CasaStore.hasCredentials()) {
-                renderSetup(app);
+                renderSetup(app, true);
                 return;
             }
-        }
-
-        // Step 2: PIN check
-        if (CasaStore.hasPinSet() && !CasaStore.isSessionAuth()) {
-            renderPinScreen(app, false);
+            // Has credentials but not connected yet → show password-only unlock
+            renderSetup(app, false);
             return;
         }
 
-        // Step 3: First time — set PIN
-        if (!CasaStore.hasPinSet()) {
-            renderPinScreen(app, true);
+        // Step 2: Connected but session not authenticated → password unlock
+        if (!CasaStore.isSessionAuth()) {
+            renderSetup(app, false);
             return;
         }
 
-        // Step 4: Pick user (if not selected this session)
+        // Step 3: Pick user (if not selected this session)
         if (!state.currentUser) {
             renderUserPicker(app);
             return;
@@ -189,24 +180,60 @@ const App = (() => {
     }
 
     // ========================================================================
-    // SETUP SCREEN (GitHub Token + Repo)
+    // SETUP / UNLOCK SCREEN (combined, like evChargeTracker)
+    // isFirstTime: show all 3 fields. Otherwise: password only.
     // ========================================================================
-    function renderSetup(container) {
+    function renderSetup(container, isFirstTime) {
         const page = el('div', { class: 'lock-screen' });
         page.appendChild(el('div', { class: 'lock-logo' }, '🏠'));
-        page.appendChild(el('h1', { style: { color: '#fff', marginTop: '14px' } }, 'CasaMorf'));
-        page.appendChild(el('p', { style: { color: '#8B93A7', fontSize: '13px', marginTop: '4px', textAlign: 'center' } },
-            'Connect your GitHub repo to sync data across all devices.'));
+        page.appendChild(el('h1', { style: { color: '#fff', marginTop: '14px', letterSpacing: '-1px' } }, 'CasaMorf'));
+        page.appendChild(el('p', { style: { color: '#8B93A7', fontSize: '13px', marginTop: '4px' } },
+            isFirstTime ? 'Einmalige Einrichtung' : 'Willkommen zurück'));
 
         const form = el('div', { style: { width: '100%', maxWidth: '340px', marginTop: '24px' } });
 
-        form.appendChild(el('label', { class: 'form-label' }, 'GitHub Personal Access Token'));
-        const tokenInput = el('input', { class: 'form-input', type: 'password', placeholder: 'ghp_xxxxxxxxxxxx' });
-        form.appendChild(tokenInput);
+        let repoInput, tokenInput;
 
-        form.appendChild(el('label', { class: 'form-label' }, 'Repository (owner/name)'));
-        const repoInput = el('input', { class: 'form-input', placeholder: 'mpat777/casamorf' });
-        form.appendChild(repoInput);
+        if (isFirstTime) {
+            // Repo field
+            form.appendChild(el('label', { class: 'form-label' }, 'GitHub Repository'));
+            repoInput = el('input', { class: 'form-input', placeholder: 'username/casamorf' });
+            form.appendChild(repoInput);
+            form.appendChild(el('p', { style: { color: '#5C6478', fontSize: '10px', marginTop: '-10px', marginBottom: '14px' } },
+                'Format: dein-username/repo-name'));
+
+            // Token field with eye toggle
+            form.appendChild(el('label', { class: 'form-label' }, 'GitHub Personal Access Token'));
+            const tokenWrap = el('div', { style: { position: 'relative' } });
+            tokenInput = el('input', { class: 'form-input', type: 'password', placeholder: 'ghp_xxxxxxxxxxxx', style: { paddingRight: '40px' } });
+            const eyeBtn = el('button', {
+                class: 'btn-icon',
+                style: { position: 'absolute', right: '4px', top: '4px' },
+                onClick: () => { tokenInput.type = tokenInput.type === 'password' ? 'text' : 'password'; }
+            });
+            eyeBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+            tokenWrap.appendChild(tokenInput);
+            tokenWrap.appendChild(eyeBtn);
+            form.appendChild(tokenWrap);
+            form.appendChild(el('p', { style: { color: '#5C6478', fontSize: '10px', marginTop: '-10px', marginBottom: '14px', lineHeight: '1.4' } },
+                'GitHub → Settings → Developer Settings → Fine-grained tokens\nBerechtigung: Contents Read & Write'));
+        }
+
+        // Password field (always shown)
+        form.appendChild(el('label', { class: 'form-label' }, 'Verschlüsselungspasswort'));
+        const pwWrap = el('div', { style: { position: 'relative' } });
+        const pwInput = el('input', { class: 'form-input', type: 'password', placeholder: 'Gemeinsames Passwort', style: { paddingRight: '40px' } });
+        const pwEye = el('button', {
+            class: 'btn-icon',
+            style: { position: 'absolute', right: '4px', top: '4px' },
+            onClick: () => { pwInput.type = pwInput.type === 'password' ? 'text' : 'password'; }
+        });
+        pwEye.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+        pwWrap.appendChild(pwInput);
+        pwWrap.appendChild(pwEye);
+        form.appendChild(pwWrap);
+        form.appendChild(el('p', { style: { color: '#5C6478', fontSize: '10px', marginTop: '-10px', marginBottom: '14px' } },
+            'Daten werden damit verschlüsselt. Auf beiden Geräten dasselbe Passwort verwenden!'));
 
         const errMsg = el('p', { style: { color: '#FF6B8A', fontSize: '12px', textAlign: 'center', marginBottom: '8px', display: 'none' } });
         form.appendChild(errMsg);
@@ -214,85 +241,84 @@ const App = (() => {
         const btn = el('button', {
             class: 'btn-primary w-full',
             onClick: async () => {
-                const token = tokenInput.value.trim();
-                const repo = repoInput.value.trim();
-                if (!token || !repo) return;
-                btn.textContent = 'Connecting...';
-                btn.disabled = true;
-                try {
-                    await CasaStore.connect(token, repo);
-                    CasaStore.saveCredentials(token, repo);
-                    await loadAll();
-                    render();
-                } catch (e) {
-                    errMsg.textContent = 'Connection failed. Check token & repo name.';
-                    errMsg.style.display = 'block';
-                    btn.textContent = 'Connect';
-                    btn.disabled = false;
-                }
-            }
-        }, '🔗 Connect');
+                const pw = pwInput.value.trim();
+                if (!pw || pw.length < 4) { errMsg.textContent = 'Passwort min. 4 Zeichen'; errMsg.style.display = 'block'; return; }
 
-        form.appendChild(btn);
+                if (isFirstTime) {
+                    const token = tokenInput.value.trim();
+                    const repo = repoInput.value.trim();
+                    if (!token || !repo) { errMsg.textContent = 'Alle Felder ausfüllen'; errMsg.style.display = 'block'; return; }
 
-        form.appendChild(el('p', { style: { color: '#5C6478', fontSize: '11px', textAlign: 'center', marginTop: '14px', lineHeight: '1.5' } },
-            'Create a PAT at GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens. Grant "Contents: Read and write" for your repo.'));
+                    btn.textContent = 'Verbinde...';
+                    btn.disabled = true;
+                    try {
+                        await CasaStore.connect(token, repo);
+                        CasaStore.saveCredentials(token, repo);
+                    } catch (e) {
+                        errMsg.textContent = 'Verbindung fehlgeschlagen. Token & Repo prüfen.';
+                        errMsg.style.display = 'block';
+                        btn.textContent = 'Verbinden & Weiter';
+                        btn.disabled = false;
+                        return;
+                    }
 
-        page.appendChild(form);
-        container.appendChild(page);
-        setTimeout(() => tokenInput.focus(), 100);
-    }
-
-    // ========================================================================
-    // PIN SCREEN
-    // ========================================================================
-    function renderPinScreen(container, isNew) {
-        const page = el('div', { class: 'lock-screen' });
-        page.appendChild(el('div', { class: 'lock-logo' }, '🏠'));
-        page.appendChild(el('h1', { style: { color: '#fff', marginTop: '14px' } }, 'CasaMorf'));
-        page.appendChild(el('p', { style: { color: '#8B93A7', fontSize: '13px', marginTop: '4px' } },
-            isNew ? 'Set a PIN to protect your household.' : 'Enter your PIN.'));
-
-        const form = el('div', { style: { width: '100%', maxWidth: '280px', marginTop: '28px' } });
-
-        const pinInput = el('input', {
-            class: 'form-input',
-            type: 'password',
-            inputmode: 'numeric',
-            maxlength: '6',
-            placeholder: isNew ? 'New PIN (4-6 digits)' : 'PIN',
-            style: { textAlign: 'center', fontSize: '24px', letterSpacing: '8px' },
-        });
-
-        const errMsg = el('p', { style: { color: '#FF6B8A', fontSize: '12px', textAlign: 'center', marginBottom: '8px', display: 'none' } }, 'Wrong PIN');
-
-        const btn = el('button', {
-            class: 'btn-primary w-full',
-            onClick: async () => {
-                const pin = pinInput.value.trim();
-                if (pin.length < 4) return;
-                if (isNew) {
-                    await CasaStore.setPin(pin);
-                    CasaStore.setSessionAuth();
-                    toast('PIN set ✓');
-                    render();
+                    // First time: set password. Returning: unlock.
+                    if (!CasaStore.hasPinSet()) {
+                        btn.textContent = 'Verschlüssle...';
+                        await CasaStore.setPin(pw);
+                        await loadAll();
+                        render();
+                    } else {
+                        btn.textContent = 'Entschlüssle...';
+                        const ok = await CasaStore.verifyPin(pw);
+                        if (!ok) { errMsg.textContent = 'Falsches Passwort'; errMsg.style.display = 'block'; btn.textContent = 'Verbinden & Weiter'; btn.disabled = false; return; }
+                        const unlocked = await CasaStore.unlock(pw);
+                        if (!unlocked) { errMsg.textContent = 'Entschlüsselung fehlgeschlagen'; errMsg.style.display = 'block'; btn.textContent = 'Verbinden & Weiter'; btn.disabled = false; return; }
+                        await loadAll();
+                        render();
+                    }
                 } else {
-                    const ok = await CasaStore.verifyPin(pin);
-                    if (!ok) { errMsg.style.display = 'block'; pinInput.value = ''; return; }
-                    CasaStore.setSessionAuth();
-                    render();
+                    // Returning user: just unlock with password
+                    btn.textContent = 'Entschlüssle...';
+                    btn.disabled = true;
+
+                    // Connect first if needed
+                    if (!CasaStore.isConnected()) {
+                        const { token, repo } = CasaStore.getCredentials();
+                        try {
+                            await CasaStore.connect(token, repo);
+                        } catch (e) {
+                            errMsg.textContent = 'GitHub-Verbindung fehlgeschlagen';
+                            errMsg.style.display = 'block';
+                            btn.textContent = 'Entsperren';
+                            btn.disabled = false;
+                            return;
+                        }
+                    }
+
+                    if (!CasaStore.hasPinSet()) {
+                        // Edge case: credentials saved but no data yet
+                        await CasaStore.setPin(pw);
+                        await loadAll();
+                        render();
+                    } else {
+                        const ok = await CasaStore.verifyPin(pw);
+                        if (!ok) { errMsg.textContent = 'Falsches Passwort'; errMsg.style.display = 'block'; pwInput.value = ''; btn.textContent = 'Entsperren'; btn.disabled = false; return; }
+                        const unlocked = await CasaStore.unlock(pw);
+                        if (!unlocked) { errMsg.textContent = 'Entschlüsselung fehlgeschlagen'; errMsg.style.display = 'block'; pwInput.value = ''; btn.textContent = 'Entsperren'; btn.disabled = false; return; }
+                        await loadAll();
+                        render();
+                    }
                 }
             }
-        }, isNew ? '🔒 Set PIN' : '🔓 Unlock');
+        }, isFirstTime ? 'Verbinden & Weiter' : 'Entsperren');
 
-        pinInput.addEventListener('keydown', e => { if (e.key === 'Enter') btn.click(); });
+        pwInput.addEventListener('keydown', e => { if (e.key === 'Enter') btn.click(); });
 
-        form.appendChild(pinInput);
-        form.appendChild(errMsg);
         form.appendChild(btn);
         page.appendChild(form);
         container.appendChild(page);
-        setTimeout(() => pinInput.focus(), 100);
+        setTimeout(() => (isFirstTime ? repoInput : pwInput).focus(), 100);
     }
 
     // ========================================================================
@@ -886,20 +912,30 @@ const App = (() => {
             const { token, repo } = CasaStore.getCredentials();
             try {
                 await CasaStore.connect(token, repo);
-                await loadAll();
-                // Restore current user from localStorage
-                const saved = localStorage.getItem('casamorf-current-user');
-                if (saved) {
-                    const parsed = JSON.parse(saved);
-                    // Verify user still exists in members
-                    const found = state.members.find(m => m.id === parsed.id);
-                    if (found) state.currentUser = found;
-                }
+                // Data is still encrypted — don't loadAll() yet.
+                // After PIN unlock, loadAll() will be called.
             } catch (e) {
                 console.error("Auto-connect failed:", e);
             }
         }
         render();
+    }
+
+    // Called after successful PIN unlock to hydrate state
+    async function loadAll() {
+        state.household = await CasaStore.load('household', null);
+        state.members = await CasaStore.load('members', []);
+        state.items = await CasaStore.load('items', []);
+        state.tasks = await CasaStore.load('tasks', []);
+        // Restore current user from localStorage
+        const saved = localStorage.getItem('casamorf-current-user');
+        if (saved) {
+            try {
+                const parsed = JSON.parse(saved);
+                const found = state.members.find(m => m.id === parsed.id);
+                if (found) state.currentUser = found;
+            } catch (e) {}
+        }
     }
 
     return { init };

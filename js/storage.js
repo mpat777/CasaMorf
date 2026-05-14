@@ -1,13 +1,21 @@
 // ============================================================================
-// CasaMorf — GitHub-based Shared Storage Layer
-// Same architecture as evChargeTracker: data stored as JSON
-// in the repo via GitHub API. All devices share one data file.
+// CasaMorf — Encrypted GitHub Storage Layer
+// 
+// store.json format on GitHub:
+// {
+//   "pinHash": "sha256-hash-for-verification",
+//   "data": "base64-AES-256-GCM-encrypted-blob"
+// }
+//
+// Without the PIN, "data" is unreadable garbage.
 // ============================================================================
 
 const GITHUB_FILE = "data/store.json";
 const LOCAL_TOKEN_KEY = "casamorf-gh-token";
 const LOCAL_REPO_KEY = "casamorf-gh-repo";
 const LOCAL_PIN_KEY = "casamorf-pin-session";
+
+// ─── GitHub DB Layer (reads/writes raw JSON to repo) ───
 
 class GitHubDB {
     constructor(token, repo) {
@@ -20,10 +28,7 @@ class GitHubDB {
     async read() {
         try {
             const res = await fetch(this.baseUrl, {
-                headers: {
-                    Authorization: `Bearer ${this.token}`,
-                    Accept: "application/vnd.github.v3+json",
-                },
+                headers: { Authorization: `Bearer ${this.token}`, Accept: "application/vnd.github.v3+json" },
                 cache: "no-store",
             });
             if (res.status === 404) return null;
@@ -55,7 +60,6 @@ class GitHubDB {
                 body: JSON.stringify(body),
             });
 
-            // SHA conflict — re-read and retry once
             if (res.status === 409 || res.status === 422) {
                 await this.read();
                 body.sha = this.sha;
@@ -83,28 +87,22 @@ class GitHubDB {
     }
 }
 
-// ─── CasaStore: App-level storage interface ───
+// ─── CasaStore: Encrypted storage on top of GitHubDB ───
 
 const CasaStore = (() => {
     let _db = null;
-    let _data = null;
-    let _pinHash = null;
+    let _raw = null;      // Raw store.json content { pinHash, data }
+    let _decrypted = null; // Decrypted app data
+    let _aesKey = null;    // Derived AES key (from PIN)
 
-    async function hashPin(pin) {
-        const enc = new TextEncoder();
-        const hash = await crypto.subtle.digest("SHA-256", enc.encode(pin + "casamorf-salt"));
-        return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
-    }
+    // --- GitHub credentials (localStorage, per device) ---
 
     function hasCredentials() {
         return !!(localStorage.getItem(LOCAL_TOKEN_KEY) && localStorage.getItem(LOCAL_REPO_KEY));
     }
 
     function getCredentials() {
-        return {
-            token: localStorage.getItem(LOCAL_TOKEN_KEY),
-            repo: localStorage.getItem(LOCAL_REPO_KEY),
-        };
+        return { token: localStorage.getItem(LOCAL_TOKEN_KEY), repo: localStorage.getItem(LOCAL_REPO_KEY) };
     }
 
     function saveCredentials(token, repo) {
@@ -118,69 +116,108 @@ const CasaStore = (() => {
         sessionStorage.removeItem(LOCAL_PIN_KEY);
     }
 
+    // --- Connect to GitHub and read raw store ---
+
     async function connect(token, repo) {
         _db = new GitHubDB(token, repo);
-        _data = await _db.read();
-        if (!_data) {
-            _data = { pinHash: null, household: null, members: [], items: [], tasks: [] };
-        }
-        _pinHash = _data.pinHash || null;
+        _raw = await _db.read();
+        // First time: no file exists yet
+        if (!_raw) _raw = { pinHash: null, data: null };
         return true;
     }
 
-    function isConnected() { return _db !== null && _data !== null; }
-    function hasPinSet() { return !!_pinHash; }
+    function isConnected() { return _db !== null; }
+    function hasPinSet() { return !!(_raw && _raw.pinHash); }
+
+    // --- PIN verification and unlock ---
 
     async function verifyPin(pin) {
-        return (await hashPin(pin)) === _pinHash;
+        const hash = await CasaCrypto.hashPin(pin);
+        return hash === _raw.pinHash;
+    }
+
+    async function unlock(pin) {
+        _aesKey = await CasaCrypto.deriveKey(pin);
+        // Try to decrypt existing data
+        if (_raw.data) {
+            try {
+                const json = await CasaCrypto.decrypt(_raw.data, _aesKey);
+                _decrypted = JSON.parse(json);
+            } catch (e) {
+                console.error("Decrypt failed — wrong PIN?", e);
+                _aesKey = null;
+                return false;
+            }
+        } else {
+            // Fresh start
+            _decrypted = { household: null, members: [], items: [], tasks: [] };
+        }
+        sessionStorage.setItem(LOCAL_PIN_KEY, "1");
+        return true;
     }
 
     async function setPin(pin) {
-        _pinHash = await hashPin(pin);
-        _data.pinHash = _pinHash;
+        _aesKey = await CasaCrypto.deriveKey(pin);
+        _raw.pinHash = await CasaCrypto.hashPin(pin);
+        if (!_decrypted) _decrypted = { household: null, members: [], items: [], tasks: [] };
+        sessionStorage.setItem(LOCAL_PIN_KEY, "1");
         await _save();
     }
 
-    function setSessionAuth() { sessionStorage.setItem(LOCAL_PIN_KEY, "1"); }
     function isSessionAuth() { return sessionStorage.getItem(LOCAL_PIN_KEY) === "1"; }
 
+    // --- Data access (works on decrypted data) ---
+
     async function save(key, value) {
-        if (!_data) return;
-        _data[key] = value;
+        if (!_decrypted) return;
+        _decrypted[key] = value;
         await _save();
     }
 
     async function load(key, fallback = null) {
-        if (!_data) return fallback;
-        return _data[key] !== undefined ? _data[key] : fallback;
+        if (!_decrypted) return fallback;
+        return _decrypted[key] !== undefined ? _decrypted[key] : fallback;
     }
 
     async function saveAll(obj) {
-        if (!_data) return;
-        Object.assign(_data, obj);
+        if (!_decrypted) return;
+        Object.assign(_decrypted, obj);
         await _save();
     }
 
+    // Encrypt and write to GitHub
     async function _save() {
-        if (!_db || !_data) return false;
-        return await _db.write(_data);
+        if (!_db || !_aesKey || !_decrypted) return false;
+        const encrypted = await CasaCrypto.encrypt(JSON.stringify(_decrypted), _aesKey);
+        _raw.data = encrypted;
+        return await _db.write(_raw);
     }
 
+    // Pull latest from GitHub and re-decrypt
     async function refresh() {
         if (!_db) return false;
-        _data = await _db.read();
-        if (_data) _pinHash = _data.pinHash || null;
-        return !!_data;
+        _raw = await _db.read();
+        if (_raw && _raw.data && _aesKey) {
+            try {
+                const json = await CasaCrypto.decrypt(_raw.data, _aesKey);
+                _decrypted = JSON.parse(json);
+            } catch (e) {
+                console.error("Refresh decrypt failed:", e);
+                return false;
+            }
+        }
+        return true;
     }
 
+    // Export decrypted data as JSON (local backup)
     function exportAll() {
-        return JSON.stringify(_data, null, 2);
+        return JSON.stringify(_decrypted, null, 2);
     }
 
     return {
         hasCredentials, getCredentials, saveCredentials, clearCredentials,
-        connect, isConnected, hasPinSet, verifyPin, setPin,
-        setSessionAuth, isSessionAuth,
+        connect, isConnected, hasPinSet, verifyPin, unlock, setPin,
+        isSessionAuth,
         save, load, saveAll, refresh, exportAll,
     };
 })();

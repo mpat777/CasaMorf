@@ -18,18 +18,24 @@ Pure vanilla HTML/CSS/JS — no framework, no build step, no backend needed.
 |---|---|
 | Frontend | Vanilla JS, CSS custom properties |
 | Data Storage | GitHub API (data/store.json in repo) |
-| Auth | PIN (SHA-256 hashed, stored in data file) |
+| Encryption | AES-256-GCM (PBKDF2 key from PIN) |
+| Auth | PIN (SHA-256 hash stored in cleartext, data encrypted) |
 | Hosting | GitHub Pages |
 | Offline | Service Worker (PWA) |
 | Font | Space Grotesk |
 
 ## How It Works
 
-Data is stored as a JSON file (`data/store.json`) directly in your GitHub repo via the GitHub API. Both devices read/write the same file — no external backend needed.
+`data/store.json` in your repo contains two fields:
+- `pinHash` — SHA-256 hash of the PIN (for verification only)
+- `data` — AES-256-GCM encrypted blob (all app data)
 
-1. On first launch, enter your GitHub PAT and repo name (one-time setup per device)
-2. Set a PIN to protect the app
-3. All changes sync to GitHub automatically
+Without the PIN, the data field is unreadable. Safe for a public repo.
+
+1. On first launch, enter your GitHub PAT and repo name (one-time per device)
+2. Set a 4-6 digit PIN — this derives the AES encryption key
+3. All changes are encrypted client-side, then pushed to GitHub
+4. Other devices pull the same file and decrypt with the same PIN
 
 ## Setup
 
